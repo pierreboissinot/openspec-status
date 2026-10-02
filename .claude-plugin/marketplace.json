@@ -1,0 +1,14 @@
+{
+  "name": "openspec-status",
+  "description": "The openspec-status Claude Code mod: the active OpenSpec change and its ticked tasks in the status line.",
+  "owner": {
+    "name": "Pierre Boissinot"
+  },
+  "plugins": [
+    {
+      "name": "openspec-status",
+      "source": "./",
+      "description": "Shows the OpenSpec changes of the open project under the prompt, for local roots and stores."
+    }
+  ]
+}

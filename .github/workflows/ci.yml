@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+    outputs:
+      claude-code-version:
+        value: ${{ jobs.plugin.outputs.claude-code-version }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The only pin: release.yml reads it from this workflow's output.
+  CLAUDE_CODE_VERSION: 2.1.287
+
+jobs:
+  typescript:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+
+      - name: Install Claude Code
+        run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      # .claude-plugin/types/ is gitignored and only written when a session loads the mod;
+      # the load happens before the first API call, so a placeholder key is enough.
+      - name: Write the engine's type declarations
+        env:
+          ANTHROPIC_API_KEY: sk-ant-placeholder
+        run: |
+          claude -p --plugin-dir . --max-turns 1 ok || true
+          test -f .claude-plugin/types/claude-code/index.d.ts
+
+      - name: Typecheck
+        run: npx --yes -p typescript@5 tsc -p .
+
+  plugin:
+    name: Plugin
+    runs-on: ubuntu-latest
+    outputs:
+      claude-code-version: ${{ env.CLAUDE_CODE_VERSION }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the README names the pinned Claude Code version
+        run: |
+          grep -qF "Verified on Claude Code ${CLAUDE_CODE_VERSION}." README.md \
+            || { echo "::error file=README.md::Update \"Verified on Claude Code\" to ${CLAUDE_CODE_VERSION}"; exit 1; }
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+
+      - name: Install Claude Code
+        run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Validate the plugin manifest and hooks
+        run: claude plugin validate --strict .claude-plugin/plugin.json
+
+      - name: Validate the marketplace manifest
+        run: claude plugin validate --strict .claude-plugin/marketplace.json
+
+      - name: Check the release tag
+        run: claude plugin tag --dry-run .
+
+      - name: Test
+        run: claude plugin test .

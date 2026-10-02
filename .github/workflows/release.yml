@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .claude-plugin/plugin.json
+      - .claude-plugin/marketplace.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Tag and publish
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      CLAUDE_CODE_VERSION: ${{ needs.ci.outputs.claude-code-version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Read the version
+        id: version
+        run: |
+          version="$(jq -r .version .claude-plugin/plugin.json)"
+          tag="openspec-status--v${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if git rev-parse --quiet --verify "refs/tags/${tag}" > /dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${tag} already exists, nothing to release. Bump the version in .claude-plugin/plugin.json to publish."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v5
+        if: steps.version.outputs.exists == 'false'
+        with:
+          node-version: lts/*
+
+      - name: Install Claude Code
+        if: steps.version.outputs.exists == 'false'
+        run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Tag the release
+        if: steps.version.outputs.exists == 'false'
+        env:
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: claude plugin tag --push .
+
+      - name: Publish the GitHub release
+        if: steps.version.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release create "$TAG" --verify-tag --generate-notes --title "openspec-status $VERSION"

@@ -1,0 +1,35 @@
+# Claude Code — per-user local files
+.claude/settings.local.json
+CLAUDE.local.md
+.claude/skills/
+.claude/commands/
+
+# Claude Code — engine declarations, rewritten on each load of the mod
+.claude-plugin/types/
+
+# OpenSpec
+openspec/
+
+# Serena
+.serena/
+
+# Dependencies
+node_modules/
+
+# Logs and env
+*.log
+.env
+.env.*
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Demo video, an input of the LinkedIn cut
+demo/*.mp4
