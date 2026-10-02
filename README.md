@@ -43,7 +43,7 @@ Where no flag can be given (the desktop app, an SDK host), set `CLAUDE_CODE_PLUG
 
 - OpenSpec CLI 1.14 or newer on the `PATH`.
 - `git`, for the current branch.
-- Claude Code with function-hook mods, verified on 2.1.287. The mods API is in early access and may change between releases; run `claude plugin validate .claude-plugin/plugin.json` from the plugin folder after an update.
+- Claude Code with function-hook mods. Verified on Claude Code 2.1.287. The mods API is in early access and may change between releases; run `claude plugin validate .claude-plugin/plugin.json` from the plugin folder after an update.
 
 ## Which change is active
 
