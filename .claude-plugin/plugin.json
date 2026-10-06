@@ -1,6 +1,6 @@
 {
   "name": "openspec-status",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shows the OpenSpec changes of the open project under the prompt, for local roots and stores.",
   "types": "./types/index.d.ts",
   "author": {
