@@ -13,6 +13,12 @@ In the OpenSpec repository, after `/opsx:apply add-global-install-scope`:
 openspec  add-global-install-scope  0/38 tasks
 ```
 
+In a store whose checkout is three commits behind its upstream:
+
+```
+openspec  add-global-install-scope  0/38 tasks · store 3 commits behind
+```
+
 Claude Code draws the `⚠ openspec-status:` prefix in front of every plugin's status line; it does not mean something is wrong.
 
 ## Install
@@ -51,13 +57,31 @@ Where no flag can be given (the desktop app, an SDK host), set `CLAUDE_CODE_PLUG
    - in a command Claude runs through the `openspec` CLI, as every `/opsx` workflow does: `--change <name>`, `new change <name>`, or an argument that is the name of a change (`openspec validate <name>`). Launchers such as `npx`, `pnpm` or `env` in front, and a versioned package (`npx @fission-ai/openspec@latest`), are recognized; `openspec` quoted inside another command's argument is not;
    - the first argument of an `/opsx:*` command, when it is the name of a change.
 2. Otherwise, the change named like the current git branch.
-3. Otherwise none, and there is no status line.
+3. Otherwise none, and there is no status line, unless a health finding is retained (see below).
 
 Changing directory or `/clear` forgets the workflow's change. A change created during the turn (`openspec new change`) shows up once it is listed. A Bash call you refuse at the permission prompt names nothing.
+
+## Health
+
+The mod reads `openspec doctor --json` and keeps its errors and warnings, plus a store checkout behind its upstream tracking branch. It ignores the other notes, such as a store remote that differs from the checkout's origin or a referenced store whose spec index was truncated. The most important finding goes at the end of the status line, in a few words, followed by `+N` when there are others:
+
+```
+openspec  add-dark-mode  3/7 tasks · team-plans not registered +1
+```
+
+Without an active change, a finding still shows, on its own:
+
+```
+openspec  store 3 commits behind
+```
+
+How far behind the store is comes from its local upstream tracking branch, as of its last `git fetch`. The finding appears a moment after the change: the session does not wait for `doctor`. If `doctor` fails, the status line stays as it would be without it, and the reason goes to the debug log only.
 
 ## When it refreshes
 
 At session start, after `/clear`, after a change of working directory, at the end of every main-conversation turn, on `/openspec`, and as soon as a workflow names another change.
+
+Health is read at session start, after `/clear`, after a change of working directory and on `/openspec`, but never at the end of a turn.
 
 ## `/openspec`
 
@@ -72,12 +96,23 @@ Reads the changes again, updates the status line, and answers with a one-line su
 
 When the CLI call fails, the answer keeps the last known summary and ends with `(refresh failed: <error>)`.
 
+`/openspec` also reads the health again. Under the summary it lists every finding, most important first, with the full message from `openspec doctor` and, when it suggests one, its fix:
+
+```
+openspec: store:demo-plans, 30 active changes
+- Referenced store 'team-plans' is not registered on this machine.
+  Fix: git clone -- git@github.com:dev/team-plans.git '/home/dev/openspec/team-plans' && openspec store register '/home/dev/openspec/team-plans' --id team-plans
+- This store checkout is 3 commits behind its upstream tracking branch; teammates on newer commits may resolve different specs.
+```
+
+When `openspec doctor --json` fails, the summary ends with `(doctor failed: <reason>)` and no finding is listed.
+
 `/openspec` is registered only once an OpenSpec root has been resolved. Claude Code cannot unregister a command, so after moving to a directory without OpenSpec in the same session it stays listed.
 
 ## What it never does
 
 - In a project without OpenSpec, or without the `openspec` CLI, it shows nothing at all: no status line, no command.
-- It never writes to disk. It runs only `openspec list --json` and `git branch --show-current`, in the session's working directory.
+- It never writes to disk and never repairs anything. It runs only `openspec list --json`, `openspec doctor --json` and `git branch --show-current`, in the session's working directory.
 - It never calls the model.
 
 ## Development
@@ -89,7 +124,7 @@ claude plugin test .
 npx -p typescript@5 tsc -p .
 ```
 
-The tests run against the engine's test kit with recorded `openspec list --json` outputs in `hooks/fixtures/`; they need neither the CLI nor git. `tsc` reads the engine's declarations from `.claude-plugin/types/`, which Claude Code writes the first time a session loads the mod from this folder.
+The tests run against the engine's test kit with recorded `openspec list --json` and `openspec doctor --json` outputs in `hooks/fixtures/`; they need neither the CLI nor git. `tsc` reads the engine's declarations from `.claude-plugin/types/`, which Claude Code writes the first time a session loads the mod from this folder.
 
 The demo is regenerated with [VHS](https://github.com/charmbracelet/vhs), from the repository root:
 
@@ -107,7 +142,6 @@ To release, bump `version` in `.claude-plugin/plugin.json` and merge to `main`. 
 
 ## Roadmap
 
-- Store health from `openspec doctor --json` in the status line: a store checkout behind its upstream, an unregistered reference (change `add-doctor-warning`).
 - A detail pane for the active change, with the state of each artifact (`openspec status --change <id> --json`).
 - Filtering a shared store's changes by target repository (`affected_areas`).
 

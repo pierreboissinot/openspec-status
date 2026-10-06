@@ -1,14 +1,33 @@
 import type { On } from 'claude-code'
+import { mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import type { OpenSpecContext } from '../types'
+import type { OpenSpecContext, OpenSpecHealth } from '../types'
+import { doctorHealthy } from './fixtures/doctor-healthy'
+
+/** A printed JSON value, raw text when a string, or `'reject'` when the CLI cannot start. */
+export type DoctorOutput = { root: unknown } | string
+
+/** A `doctor` run that answers once the test resolves it. */
+export type PendingDoctor = { pending: Promise<DoctorOutput>; resolve: (output: DoctorOutput) => void }
+
+export const pendingDoctor = (): PendingDoctor => {
+  let resolve: (output: DoctorOutput) => void = () => {}
+  const pending = new Promise<DoctorOutput>(done => {
+    resolve = done
+  })
+  return { pending, resolve }
+}
 
 export type World = {
   /** What `openspec list --json` prints, or `'reject'` when the CLI cannot start. */
   list: { root: unknown; changes?: unknown } | 'reject'
+  /** What `openspec doctor --json` answers, read when it starts. */
+  doctor: DoctorOutput | PendingDoctor
   /** The current git branch; absent outside a repository or on a detached HEAD. */
   branch?: string
   cwd: string
+  /** Every `openspec` run, as `'<subcommand> <cwd>'`. */
   openspecRuns: string[]
   registeredCommands: string[]
   logs: { text: string; to: string | undefined }[]
@@ -16,16 +35,25 @@ export type World = {
   /** Every `$.ui.status` the mod made, in order; `undefined` for a removal. */
   statusLines: (string | undefined)[]
   /** The mod's `$.state` as last written, by key. */
-  state: { context?: OpenSpecContext | null; workflowChange?: string | null; lastError?: string | null }
+  state: {
+    context?: OpenSpecContext | null
+    workflowChange?: string | null
+    lastError?: string | null
+    health?: OpenSpecHealth | null
+  }
+  /** Lets the work the mod started without awaiting it run to its end. */
+  settle: () => Promise<void>
 }
 
 const ran = (stdout: string, exitCode: number) => ({
   value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
 })
 
-export const createWorld = (on: On, given: Pick<World, 'list'> & Partial<Pick<World, 'branch' | 'cwd'>>): World => {
+export const createWorld = (on: On, given: Pick<World, 'list'> & Partial<Pick<World, 'doctor' | 'branch' | 'cwd'>>): World => {
+  const clock = mock.clock(on)
   const world: World = {
     cwd: '/home/dev/OpenSpec',
+    doctor: doctorHealthy,
     ...given,
     openspecRuns: [],
     registeredCommands: [],
@@ -33,16 +61,22 @@ export const createWorld = (on: On, given: Pick<World, 'list'> & Partial<Pick<Wo
     statusAndToasts: [],
     statusLines: [],
     state: {},
+    settle: clock.settle,
   }
 
-  on('process.run', (_$, e) => {
-    const [command] = e.argv
+  on('process.run', async (_$, e) => {
+    const [command, subcommand] = e.argv
     if (command === 'openspec') {
-      world.openspecRuns.push(e.init?.cwd ?? world.cwd)
-      if (world.list === 'reject') {
+      world.openspecRuns.push(`${subcommand} ${e.init?.cwd ?? world.cwd}`)
+      const answer = subcommand === 'doctor' ? world.doctor : world.list
+      const output = typeof answer === 'object' && 'pending' in answer ? await answer.pending : answer
+      if (output === 'reject') {
         return { deny: 'spawn openspec ENOENT' }
       }
-      return ran(JSON.stringify(world.list), world.list.root ? 0 : 1)
+      if (typeof output === 'string') {
+        return ran(output, 1)
+      }
+      return ran(JSON.stringify(output), output.root ? 0 : 1)
     }
     if (command === 'git') {
       return world.branch ? ran(`${world.branch}\n`, 0) : ran('', 128)

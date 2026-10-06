@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ChangeSummary, ContextKind, OpenSpecContext } from '../types'
+import type { ChangeSummary, ContextKind, HealthFinding, OpenSpecContext, OpenSpecHealth } from '../types'
 
 export type ParsedList = Pick<OpenSpecContext, 'kind' | 'storeId' | 'fix' | 'changes'>
 
@@ -45,6 +45,88 @@ export const parseListOutput = (stdout: string): ParsedList | null => {
     return { kind: 'unknown-store', fix: unknownStore.fix ?? unknownStore.message ?? '', changes: [] }
   }
   return { kind: 'none', changes: [] }
+}
+
+type Diagnostic = { severity?: unknown; code?: unknown; message?: unknown; fix?: unknown }
+
+type DoctorJson = {
+  root?: { status?: unknown } | null
+  store?: { drift?: { behind?: unknown }; status?: unknown } | null
+  references?: unknown
+  status?: unknown
+}
+
+const diagnostics = (status: unknown): Diagnostic[] =>
+  Array.isArray(status) ? status.filter((entry): entry is Diagnostic => typeof entry === 'object' && entry !== null) : []
+
+const SUMMARIES: Record<string, string> = {
+  reference_invalid_id: 'invalid reference',
+  reference_registry_unreadable: 'store registry unreadable',
+  relationship_registry_unreadable: 'store registry unreadable',
+  root_pointer_ignored: 'store: line ignored',
+  root_pointer_invalid: 'store: line invalid',
+  pointer_declarations_inert: 'references inert',
+  openspec_config_missing: 'config.yaml missing',
+  openspec_config_not_file: 'config.yaml not a file',
+  openspec_specs_not_directory: 'specs/ not a directory',
+  openspec_changes_not_directory: 'changes/ not a directory',
+  openspec_archive_not_directory: 'archive/ not a directory',
+}
+
+const summarize = (code: string, storeId: string | undefined, behind: number): string => {
+  if (code === 'store_checkout_drift') return `store ${behind} commit${behind === 1 ? '' : 's'} behind`
+  if (code === 'reference_unresolved') return `${storeId ?? 'reference'} not registered`
+  if (code === 'reference_root_unhealthy') return `${storeId ?? 'reference'} unusable`
+  return SUMMARIES[code] ?? (code.startsWith('openspec_') ? 'root unhealthy' : code)
+}
+
+export const parseDoctorOutput = (stdout: string): HealthFinding[] | string => {
+  let json: DoctorJson
+  try {
+    json = JSON.parse(stdout)
+  } catch {
+    return 'unparsable `openspec doctor --json` output'
+  }
+  if (typeof json !== 'object' || json === null) return 'unparsable `openspec doctor --json` output'
+  if (!json.root) {
+    const reason = diagnostics(json.status).find(entry => typeof entry.message === 'string')?.message
+    return `\`openspec doctor --json\` resolved no root${reason ? `: ${String(reason)}` : ''}`
+  }
+
+  const behind = Number(json.store?.drift?.behind ?? 0) || 0
+  const sourced: { diagnostic: Diagnostic; storeId?: string }[] = [
+    ...diagnostics(json.root.status).map(diagnostic => ({ diagnostic })),
+    ...diagnostics(json.store?.status).map(diagnostic => ({ diagnostic })),
+    ...diagnostics(json.references).flatMap(reference => {
+      const { store_id: storeId, status } = reference as { store_id?: unknown; status?: unknown }
+      return diagnostics(status).map(diagnostic =>
+        typeof storeId === 'string' ? { diagnostic, storeId } : { diagnostic },
+      )
+    }),
+    ...diagnostics(json.status).map(diagnostic => ({ diagnostic })),
+  ]
+
+  const rank = ({ severity, code }: Diagnostic): number | undefined => {
+    if (code === 'store_checkout_drift') return behind > 0 ? 2 : undefined
+    if (code === 'reference_index_truncated') return undefined
+    return severity === 'error' ? 0 : severity === 'warning' ? 1 : undefined
+  }
+
+  return sourced
+    .flatMap(({ diagnostic, storeId }) => {
+      const order = rank(diagnostic)
+      const { severity, code, message, fix } = diagnostic
+      if (order === undefined || typeof severity !== 'string' || typeof code !== 'string') return []
+      const finding: HealthFinding = {
+        severity,
+        code,
+        message: typeof message === 'string' ? message : code,
+        summary: summarize(code, storeId, behind),
+      }
+      return [{ order, finding: typeof fix === 'string' ? { ...finding, fix } : finding }]
+    })
+    .sort((a, b) => a.order - b.order)
+    .map(({ finding }) => finding)
 }
 
 const unquote = (token: string): string => token.replace(/^["']+|["']+$/g, '')
@@ -111,6 +193,8 @@ export const changeFromOpenspecCommand = (command: string, knownNames: readonly 
 export const contextAtom = atom({ plugin: 'openspec-status', key: 'context' } as const, null)
 export const workflowChangeAtom = atom({ plugin: 'openspec-status', key: 'workflowChange' } as const, null)
 export const lastErrorAtom = atom({ plugin: 'openspec-status', key: 'lastError' } as const, null)
+export const healthAtom = atom({ plugin: 'openspec-status', key: 'health' } as const, null)
+export const healthReadAtom = atom({ plugin: 'openspec-status', key: 'healthRead' } as const, 0)
 
 const hasRoot = (kind: ContextKind): boolean => kind === 'local' || kind === 'store'
 
@@ -122,23 +206,36 @@ const withCurrent = (context: OpenSpecContext, workflowChange: string | null): O
   return current === undefined ? rest : { ...rest, currentChange: current }
 }
 
-export const statusText = (context: OpenSpecContext | null): string | undefined => {
+export const statusText = (context: OpenSpecContext | null, health: OpenSpecHealth | null): string | undefined => {
   if (context === null || !hasRoot(context.kind)) return undefined
   const change = context.changes.find(candidate => candidate.name === context.currentChange)
-  if (!change) return undefined
-  const progress = change.totalTasks === 0 ? 'no tasks' : `${change.completedTasks}/${change.totalTasks} tasks`
-  return `openspec  ${change.name}  ${progress}`
+  const progress = change && (change.totalTasks === 0 ? 'no tasks' : `${change.completedTasks}/${change.totalTasks} tasks`)
+  const head = change && `openspec  ${change.name}  ${progress}`
+  const [first, ...others] = health?.cwd === context.cwd ? health.findings : []
+  const tail = first && `${first.summary}${others.length > 0 ? ` +${others.length}` : ''}`
+  if (head && tail) return `${head} · ${tail}`
+  return head ?? (tail ? `openspec  ${tail}` : undefined)
+}
+
+const writeLine = ($: EngineInterface, before: string | undefined, after: string | undefined): void => {
+  if (after !== undefined) {
+    $.ui.status(after)
+  } else if (before !== undefined) {
+    $.ui.status(undefined)
+  }
 }
 
 const writeContext = async ($: EngineInterface, context: OpenSpecContext): Promise<void> => {
-  const previous = await read($, contextAtom)
+  const before = statusText(await read($, contextAtom), await read($, healthAtom))
   await update($, contextAtom, () => context)
-  const text = statusText(context)
-  if (text !== undefined) {
-    $.ui.status(text)
-  } else if (statusText(previous) !== undefined) {
-    $.ui.status(undefined)
-  }
+  writeLine($, before, statusText(context, await read($, healthAtom)))
+}
+
+const writeHealth = async ($: EngineInterface, health: OpenSpecHealth | null): Promise<void> => {
+  const before = statusText(await read($, contextAtom), await read($, healthAtom))
+  await update($, healthAtom, () => health)
+  const after = statusText(await read($, contextAtom), health)
+  if (after !== before) writeLine($, before, after)
 }
 
 const readBranch = async ($: EngineInterface, cwd: string): Promise<string | undefined> => {
@@ -183,6 +280,33 @@ export const refresh = async ($: EngineInterface, cwd: string): Promise<OpenSpec
   return context
 }
 
+const diagnose = async ($: EngineInterface, cwd: string): Promise<OpenSpecHealth> => {
+  let findings: HealthFinding[] | string
+  try {
+    const { stdout } = await $.process.run(['openspec', 'doctor', '--json'], { cwd, timeoutMs: 10_000 })
+    findings = parseDoctorOutput(stdout)
+  } catch (error) {
+    findings = `\`openspec doctor --json\` failed in ${cwd}: ${error instanceof Error ? error.message : String(error)}`
+  }
+  if (typeof findings !== 'string') return { cwd, findings }
+  $.ui.log(`openspec-status: ${findings}`, { to: 'debug' })
+  return { cwd, findings: [], error: findings }
+}
+
+const readHealth = async ($: EngineInterface, context: OpenSpecContext): Promise<void> => {
+  const ticket = await update($, healthReadAtom, count => count + 1)
+  const health = hasRoot(context.kind) ? await diagnose($, context.cwd) : null
+  if ((await read($, healthReadAtom)) !== ticket) return
+  const current = await read($, contextAtom)
+  if (current === null || current.cwd !== context.cwd) return
+  await writeHealth($, health)
+}
+
+const startHealthRead = ($: EngineInterface, context: OpenSpecContext): void => {
+  // The mod may be unloaded before doctor answers; its state is then refused, with no one left to tell.
+  readHealth($, context).catch(() => undefined)
+}
+
 const nameWorkflowChange = async ($: EngineInterface, name: string): Promise<void> => {
   await update($, workflowChangeAtom, () => name)
   const context = await read($, contextAtom)
@@ -194,7 +318,7 @@ const nameWorkflowChange = async ($: EngineInterface, name: string): Promise<voi
 const knownNames = (context: OpenSpecContext | null): string[] =>
   context !== null && hasRoot(context.kind) ? context.changes.map(change => change.name) : []
 
-export const commandAnswer = (context: OpenSpecContext): string => {
+const summaryLine = (context: OpenSpecContext): string => {
   if (context.kind === 'none') return `openspec: no OpenSpec root resolved from ${context.cwd}`
   if (context.kind === 'unknown-store') return `openspec: unknown store, ${context.fix ?? ''}`
   const source = context.kind === 'store' ? (context.storeId ? `store:${context.storeId}` : 'store') : 'local'
@@ -202,11 +326,26 @@ export const commandAnswer = (context: OpenSpecContext): string => {
   return `openspec: ${source}, ${count} active change${count === 1 ? '' : 's'}`
 }
 
+export const commandAnswer = (
+  context: OpenSpecContext,
+  refreshError: string | null,
+  health: OpenSpecHealth | null,
+): string => {
+  const current = health?.cwd === context.cwd ? health : null
+  let summary = summaryLine(context)
+  if (refreshError !== null) summary += ` (refresh failed: ${refreshError})`
+  if (current?.error !== undefined) summary += ` (doctor failed: ${current.error})`
+  const findings = (current?.findings ?? []).flatMap(finding =>
+    finding.fix === undefined ? [`- ${finding.message}`] : [`- ${finding.message}`, `  Fix: ${finding.fix}`],
+  )
+  return [summary, ...findings].join('\n')
+}
+
 export const register: Register = on => {
   on('command.run', { command: 'openspec' }, async $ => {
-    const answer = commandAnswer(await refresh($, await $.session.cwd()))
-    const error = await read($, lastErrorAtom)
-    return { text: error === null ? answer : `${answer} (refresh failed: ${error})` }
+    const context = await refresh($, await $.session.cwd())
+    await readHealth($, context)
+    return { text: commandAnswer(context, await read($, lastErrorAtom), await read($, healthAtom)) }
   })
 
   on('command.run', { command: /^opsx:/ }, async ($, e, next) => {
@@ -229,21 +368,21 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
-    await refresh($, e.cwd)
+    startHealthRead($, await refresh($, e.cwd))
     return next(e)
   })
 
   on('classic.SessionStart', async ($, e, next) => {
     if (e.source === 'clear') {
       await update($, workflowChangeAtom, () => null)
-      await refresh($, await $.session.cwd())
+      startHealthRead($, await refresh($, await $.session.cwd()))
     }
     return next(e)
   })
 
   on('classic.CwdChanged', async ($, e, next) => {
     await update($, workflowChangeAtom, () => null)
-    await refresh($, e.new_cwd)
+    startHealthRead($, await refresh($, e.new_cwd))
     return next(e)
   })
 

@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'claude-code/testing'
 
+import { doctorHealthy } from './fixtures/doctor-healthy'
+import { doctorReferenceUnresolved } from './fixtures/doctor-reference-unresolved'
+import { doctorStoreBehind } from './fixtures/doctor-store-behind'
 import { noRootList } from './fixtures/no-root'
 import { openspecRepoList } from './fixtures/openspec-repo'
-import { createWorld, endTurn, runBash, runCommand, startSession } from './test-world'
+import { createWorld, endTurn, pendingDoctor, runBash, runCommand, startSession } from './test-world'
 import { changeFromOpenspecCommand } from './register'
 
 const KNOWN = openspecRepoList.changes.map(change => change.name)
@@ -212,6 +215,7 @@ describe('status line', () => {
   test('switches as soon as a workflow names another change', async ($, on) => {
     const world = createWorld(on, { list: openspecRepoList, branch: 'add-global-install-scope' })
     await startSession($, world)
+    await world.settle()
     world.openspecRuns.length = 0
 
     await runBash($, 'openspec status --change "fix-schemas-root-selection" --json')
@@ -235,6 +239,95 @@ describe('status line', () => {
     await $.classic.CwdChanged({ old_cwd: '/home/dev/OpenSpec', new_cwd: '/home/dev/elsewhere' })
 
     expect(world.statusLines).toEqual(['openspec  add-global-install-scope  0/38 tasks', undefined])
+  })
+})
+
+describe('status line health', () => {
+  test('ends with the most important finding', async ($, on) => {
+    const world = createWorld(on, { list: openspecRepoList, branch: 'add-global-install-scope', doctor: doctorStoreBehind })
+    await startSession($, world)
+    await world.settle()
+
+    expect(world.statusLines.at(-1)).toBe('openspec  add-global-install-scope  0/38 tasks · store 3 commits behind')
+  })
+
+  test('counts the other findings', async ($, on) => {
+    const world = createWorld(on, { list: openspecRepoList, branch: 'add-global-install-scope', doctor: doctorReferenceUnresolved })
+    await startSession($, world)
+    await world.settle()
+
+    expect(world.statusLines.at(-1)).toBe('openspec  add-global-install-scope  0/38 tasks · team-plans not registered +1')
+  })
+
+  test('shows a finding without an active change', async ($, on) => {
+    const world = createWorld(on, { list: openspecRepoList, branch: 'main', doctor: doctorStoreBehind })
+    await startSession($, world)
+    await world.settle()
+
+    expect(world.statusLines).toEqual(['openspec  store 3 commits behind'])
+  })
+
+  test('is removed when the finding is resolved without an active change', async ($, on) => {
+    const world = createWorld(on, { list: openspecRepoList, branch: 'main', doctor: doctorStoreBehind })
+    await startSession($, world)
+    await world.settle()
+
+    world.doctor = doctorHealthy
+    await runCommand($, 'openspec')
+
+    expect(world.statusLines.at(-1)).toBe(undefined)
+  })
+
+  test('keeps the finding after a turn end', async ($, on) => {
+    const world = createWorld(on, { list: openspecRepoList, branch: 'add-global-install-scope', doctor: doctorStoreBehind })
+    await startSession($, world)
+    await world.settle()
+
+    const ticked = structuredClone(openspecRepoList)
+    ticked.changes.find(change => change.name === 'add-global-install-scope')!.completedTasks = 3
+    world.list = ticked
+    await endTurn($)
+
+    expect(world.statusLines.at(-1)).toBe('openspec  add-global-install-scope  3/38 tasks · store 3 commits behind')
+  })
+
+  test('is never set without an OpenSpec root', async ($, on) => {
+    const world = createWorld(on, { list: noRootList, doctor: doctorStoreBehind })
+    await startSession($, world)
+    await $.classic.SessionStart({ source: 'clear' })
+    await world.settle()
+
+    expect(world.statusLines).toEqual([])
+  })
+
+  test('shows the change first, then the finding once doctor answers', async ($, on) => {
+    const doctor = pendingDoctor()
+    const world = createWorld(on, { list: openspecRepoList, branch: 'add-global-install-scope', doctor })
+    await startSession($, world)
+
+    expect(world.statusLines).toEqual(['openspec  add-global-install-scope  0/38 tasks'])
+
+    doctor.resolve(doctorStoreBehind)
+    await world.settle()
+
+    expect(world.statusLines.at(-1)).toBe('openspec  add-global-install-scope  0/38 tasks · store 3 commits behind')
+  })
+
+  test('drops the previous cwd finding as soon as the cwd changes', async ($, on) => {
+    const world = createWorld(on, { list: openspecRepoList, branch: 'main', doctor: doctorStoreBehind })
+    await startSession($, world)
+    await world.settle()
+    expect(world.statusLines.at(-1)).toBe('openspec  store 3 commits behind')
+
+    world.list = {
+      root: { path: '/home/dev/notes', source: 'nearest' },
+      changes: [{ name: 'add-search', completedTasks: 1, totalTasks: 4, lastModified: '2026-10-02T06:00:00.000Z', status: 'in-progress' }],
+    }
+    world.branch = 'add-search'
+    world.doctor = pendingDoctor()
+    await $.classic.CwdChanged({ old_cwd: '/home/dev/OpenSpec', new_cwd: '/home/dev/notes' })
+
+    expect(world.statusLines.at(-1)).toBe('openspec  add-search  1/4 tasks')
   })
 })
 
