@@ -65,33 +65,38 @@ describe('refresh', () => {
 })
 
 describe('triggers', () => {
-  test('session start runs openspec once in the session cwd', async ($, on) => {
+  test('session start runs list and doctor once each in the session cwd', async ($, on) => {
     const world = createWorld(on, { list: storeList })
     await startSession($, world)
+    await world.settle()
 
-    expect(world.openspecRuns).toEqual(['/home/dev/OpenSpec'])
+    expect(world.openspecRuns).toEqual(['list /home/dev/OpenSpec', 'doctor /home/dev/OpenSpec'])
   })
 
-  test('/clear runs openspec once', async ($, on) => {
+  test('/clear runs list and doctor once each', async ($, on) => {
     const world = createWorld(on, { list: storeList })
     await startSession($, world)
+    await world.settle()
     world.openspecRuns.length = 0
 
     await $.classic.SessionStart({ source: 'clear' })
+    await world.settle()
 
-    expect(world.openspecRuns).toHaveLength(1)
+    expect(world.openspecRuns).toEqual(['list /home/dev/OpenSpec', 'doctor /home/dev/OpenSpec'])
   })
 
-  test('a cwd change runs openspec once in the new cwd and updates the context', async ($, on) => {
+  test('a cwd change runs list and doctor once each in the new cwd and updates the context', async ($, on) => {
     const world = createWorld(on, { list: noRootList, cwd: '/home/dev/elsewhere' })
     await startSession($, world)
+    await world.settle()
     expect(world.state.context?.kind).toBe('none')
     world.openspecRuns.length = 0
 
     world.list = storeList
     await $.classic.CwdChanged({ old_cwd: '/home/dev/elsewhere', new_cwd: '/home/dev/OpenSpec' })
+    await world.settle()
 
-    expect(world.openspecRuns).toEqual(['/home/dev/OpenSpec'])
+    expect(world.openspecRuns).toEqual(['list /home/dev/OpenSpec', 'doctor /home/dev/OpenSpec'])
     expect(world.state.context?.kind).toBe('store')
   })
 
@@ -105,17 +110,19 @@ describe('triggers', () => {
     expect(world.state.context?.kind).toBe('none')
   })
 
-  test('a main-loop turn end runs openspec once and rereads the task counts', async ($, on) => {
+  test('a main-loop turn end runs list but not doctor, and rereads the task counts', async ($, on) => {
     const world = createWorld(on, { list: storeList })
     await startSession($, world)
+    await world.settle()
     world.openspecRuns.length = 0
 
     const ticked = structuredClone(storeList)
     ticked.changes.find(change => change.name === 'add-global-install-scope')!.completedTasks = 3
     world.list = ticked
     await endTurn($)
+    await world.settle()
 
-    expect(world.openspecRuns).toHaveLength(1)
+    expect(world.openspecRuns).toEqual(['list /home/dev/OpenSpec'])
     const ticking = world.state.context?.changes.find(change => change.name === 'add-global-install-scope')
     expect(ticking?.completedTasks).toBe(3)
   })
@@ -123,6 +130,7 @@ describe('triggers', () => {
   test('a subagent turn end runs nothing', async ($, on) => {
     const world = createWorld(on, { list: storeList })
     await startSession($, world)
+    await world.settle()
     world.openspecRuns.length = 0
 
     await endTurn($, 'subagent-1')
