@@ -20,6 +20,7 @@ change() {
   local name="$1" done="$2"
   shift 2
   HOME="$root/home" openspec new change "$name" > /dev/null 2>&1
+  printf '## Why\n\n%s\n' "$name" > "openspec/changes/$name/proposal.md"
   {
     echo "## Tasks"
     echo
@@ -30,6 +31,22 @@ change() {
     done
   } > "openspec/changes/$name/tasks.md"
 }
+
+spec() {
+  local name="$1"
+  shift
+  mkdir -p "openspec/specs/$name"
+  {
+    printf '# %s Specification\n\n## Purpose\n\nWhat %s covers.\n\n## Requirements\n' "$name" "$name"
+    for requirement in "$@"; do
+      printf '\n### Requirement: %s\nThe app SHALL %s.\n\n#### Scenario: %s\n- **WHEN** it applies\n- **THEN** the app does it\n' \
+        "$requirement" "$requirement" "$requirement"
+    done
+  } > "openspec/specs/$name/spec.md"
+}
+
+spec theming "follow the system theme" "remember the chosen theme"
+spec login "return to the requested page" "refuse an external return URL" "lock after five failures"
 
 change add-dark-mode 3 \
   "Add the theme tokens" "Read the system preference" "Add the settings toggle" \
@@ -62,13 +79,14 @@ export HOME="$root/home"
 export ANTHROPIC_API_KEY=$key
 export ANTHROPIC_BASE_URL=http://127.0.0.1:9
 export CLAUDE_CODE_PLUGIN_DIRS="$plugin"
+export DISABLE_AUTOUPDATER=1
 export PS1='\$ '
 cd "$project"
 
-# Edits the project behind the session's back: a task ticked after \$1 s, then a branch switch \$2 s later.
+# Edits the project behind the session's back: a task ticked after \$1 s, then, given \$2, a branch switch \$2 s later.
 demo_changes() {
   ( sleep "\$1"; sed -i 's/- \[ \] 4\./- [x] 4./' openspec/changes/add-dark-mode/tasks.md
-    sleep "\$2"; git switch --quiet fix-login-redirect ) > /dev/null 2>&1 &
+    [ -z "\${2:-}" ] || { sleep "\$2"; git switch --quiet fix-login-redirect; } ) > /dev/null 2>&1 &
 }
 EOF
 
