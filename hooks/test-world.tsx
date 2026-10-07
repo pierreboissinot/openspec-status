@@ -107,6 +107,20 @@ export const createWorld = (on: On, given: Pick<World, 'list'> & Partial<Pick<Wo
     return { value: undefined }
   })
   on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: '', stderr: '', interrupted: false } }))
+  on('tool.call', { tool: 'Edit' }, (_$, e) => ({
+    result: {
+      filePath: e.file_path,
+      oldString: e.old_string,
+      newString: e.new_string,
+      originalFile: null,
+      structuredPatch: [],
+      userModified: false,
+      replaceAll: false,
+    },
+  }))
+  on('tool.call', { tool: 'Write' }, (_$, e) => ({
+    result: { type: 'update', filePath: e.file_path, content: e.content, structuredPatch: [], originalFile: null },
+  }))
   on('command.run', { command: /^opsx:/ }, () => ({ text: '' }))
   on('session.cwd', () => ({ value: world.cwd }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
@@ -131,6 +145,11 @@ export const endTurn = ($: Engine, agentId?: string) =>
   })
 
 export const runBash = ($: Engine, command: string) => $.tool.call({ tool: 'Bash', command })
+
+export const runEdit = ($: Engine, file_path: string) =>
+  $.tool.call({ tool: 'Edit', file_path, old_string: '- [ ] 1.1', new_string: '- [x] 1.1' })
+
+export const runWrite = ($: Engine, file_path: string) => $.tool.call({ tool: 'Write', file_path, content: '- [x] 1.1\n' })
 
 export const runCommand = ($: Engine, command: string, args = '') =>
   $.command.run({ command, args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })

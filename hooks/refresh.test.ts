@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { noRootList } from './fixtures/no-root'
 import { storeList } from './fixtures/store'
-import { createWorld, endTurn, runBash, startSession } from './test-world'
+import { createWorld, endTurn, runBash, runEdit, runWrite, startSession } from './test-world'
 
 describe('refresh', () => {
   test('marks the change named like the current branch', async ($, on) => {
@@ -125,6 +125,43 @@ describe('triggers', () => {
     expect(world.openspecRuns).toEqual(['list /home/dev/OpenSpec'])
     const ticking = world.state.context?.changes.find(change => change.name === 'add-global-install-scope')
     expect(ticking?.completedTasks).toBe(3)
+  })
+
+  const tasksFile = '/home/dev/demo-plans/changes/add-global-install-scope/tasks.md'
+
+  const tickMidTurn = [
+    ['an Edit of', ($: Parameters<typeof runEdit>[0]) => runEdit($, tasksFile)],
+    ['a Write of', ($: Parameters<typeof runWrite>[0]) => runWrite($, tasksFile)],
+    ['a Bash command on', ($: Parameters<typeof runBash>[0]) => runBash($, `sed -i '5s/^- \\[ \\]/- [x]/' ${tasksFile}`)],
+  ] as const
+
+  for (const [how, tick] of tickMidTurn) {
+    test(`${how} a tasks.md runs list but not doctor, and rereads the task counts before the turn ends`, async ($, on) => {
+      const world = createWorld(on, { list: storeList, branch: 'add-global-install-scope' })
+      await startSession($, world)
+      await world.settle()
+      world.openspecRuns.length = 0
+
+      const ticked = structuredClone(storeList)
+      ticked.changes.find(change => change.name === 'add-global-install-scope')!.completedTasks = 3
+      world.list = ticked
+      await tick($)
+      await world.settle()
+
+      expect(world.openspecRuns).toEqual(['list /home/dev/OpenSpec'])
+      expect(world.statusLines.at(-1)).toEqual(expect.stringContaining('3/38 tasks'))
+    })
+  }
+
+  test('an Edit of another file runs nothing', async ($, on) => {
+    const world = createWorld(on, { list: storeList })
+    await startSession($, world)
+    await world.settle()
+    world.openspecRuns.length = 0
+
+    await runEdit($, '/home/dev/OpenSpec/src/tasks.ts')
+
+    expect(world.openspecRuns).toHaveLength(0)
   })
 
   test('a subagent turn end runs nothing', async ($, on) => {

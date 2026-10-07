@@ -367,6 +367,22 @@ export const register: Register = on => {
     return result
   })
 
+  on('tool.call', { tool: ['Edit', 'Write'], file_path: /(^|\/)tasks\.md$/ }, async ($, e, next) => {
+    const result = await next(e)
+    if (result.deny === undefined) {
+      await refresh($, await $.session.cwd())
+    }
+    return result
+  })
+
+  on('tool.call', { tool: 'Bash', command: /\btasks\.md\b/ }, async ($, e, next) => {
+    const result = await next(e)
+    if (result.deny === undefined) {
+      await refresh($, await $.session.cwd())
+    }
+    return result
+  })
+
   on('session.start', async ($, e, next) => {
     startHealthRead($, await refresh($, e.cwd))
     return next(e)

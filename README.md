@@ -79,7 +79,7 @@ How far behind the store is comes from its local upstream tracking branch, as of
 
 ## When it refreshes
 
-At session start, after `/clear`, after a change of working directory, at the end of every main-conversation turn, on `/openspec`, and as soon as a workflow names another change.
+At session start, after `/clear`, after a change of working directory, at the end of every main-conversation turn, on `/openspec`, as soon as a workflow names another change, and after every Edit or Write of a `tasks.md` and every Bash command that mentions one, so the count follows `/opsx:apply` as it ticks tasks within a single turn.
 
 Health is read at session start, after `/clear`, after a change of working directory and on `/openspec`, but never at the end of a turn.
 
