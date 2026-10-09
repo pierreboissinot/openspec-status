@@ -7,7 +7,16 @@ A [Claude Code](https://claude.com/claude-code) mod that keeps the [OpenSpec](ht
 
 In any project, with OpenSpec or not, it also warns when the context window fills up, before auto-compaction summarizes the conversation for you.
 
-![Claude Code with the status line on add-dark-mode at 3/7 tasks; after a task is ticked /openspec shows 4/7. /openspec view then opens the OpenSpec pane: Overview lists 2 specs, 5 requirements and both changes with their progress bars, and the Change tab shows add-dark-mode's artifacts and its seven tasks, four of them ticked](demo/demo.gif)
+![Claude Code with the status line on add-dark-mode at 3/7 tasks; after a task is ticked /openspec shows 4/7. /openspec view opens the OpenSpec pane: Overview lists 2 specs, 5 requirements and both changes with their progress bars, and the Change tab shows add-dark-mode's artifacts and its seven tasks. A prompt is then answered with the context 78% full: a toast advises capturing where you are with /opsx:update add-dark-mode, then /clear and /opsx:apply add-dark-mode, and the status line ends with context 78%!, until /clear removes it](demo/demo.gif)
+
+## Features
+
+- **Status line**: the active change and its ticked tasks, following the `/opsx` workflows and the git branch, for a local `openspec/` root or a declared store ([Which change is active](#which-change-is-active)).
+- **Health**: the most important `openspec doctor` finding at the end of the line, such as a store behind its upstream ([Health](#health)).
+- **Unusable store**: a line saying the declared store is not registered, its `store:` line is invalid, or the store cannot be used ([When the declared store cannot be used](#when-the-declared-store-cannot-be-used)).
+- **Context warning**: in any project, a toast and a status line segment when the context reaches 75% and 90% of the model's window, with the way back for the active change ([Context warning](#context-warning)).
+- **`/openspec`**: reads everything again and answers with a summary and every health finding ([`/openspec`](#openspec)).
+- **`/openspec view`**: a pane with every change and its progress, the specs, the health findings, and the active change's artifacts and tasks ([`/openspec view`](#openspec-view)).
 
 In the OpenSpec repository, after `/opsx:apply add-global-install-scope`:
 
@@ -165,7 +174,7 @@ Reads everything `/openspec` reads, then opens the `OpenSpec` pane instead of an
 
 Picking a change in Overview shows it in the Change tab; the active change and the status line stay as they are. The pick is forgotten when the pane closes or the working directory changes.
 
-With a declared store that is not registered, the pane shows the fix the CLI suggests. After leaving for a directory without OpenSpec, it says no root is resolved, and `/openspec view` answers like `/openspec` without opening the pane. A read that fails shows `unavailable: <reason>` in its section, and the reason goes to the debug log.
+With a declared store that is not registered, the pane shows the fix the CLI suggests; with one that cannot be used, the CLI's message, then its fix. After leaving for a directory without OpenSpec, it says no root is resolved, and `/openspec view` answers like `/openspec` without opening the pane. A read that fails shows `unavailable: <reason>` in its section, and the reason goes to the debug log.
 
 While the pane is open, it is read again whenever the status line is, and the Change tab as soon as the change it shows is another one. Health keeps its own rule. While the pane is closed, the mod runs nothing more than without it.
 
@@ -194,7 +203,7 @@ The demo is regenerated with [VHS](https://github.com/charmbracelet/vhs), from t
 vhs demo/demo.tape
 ```
 
-It records a session against a throwaway project and Claude Code home built by `demo/setup.sh`, with only local commands, so it makes no API call.
+It records a session against a throwaway project and Claude Code home built by `demo/setup.sh`, and needs `python3`. Its one prompt is answered by `demo/mock-api.py`, a stand-in for the Messages API on 127.0.0.1 that reports a context 78% full, so the recording makes no API call and shows the context warning.
 
 ## Releasing
 

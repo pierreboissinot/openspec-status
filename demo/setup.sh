@@ -71,13 +71,14 @@ cat > "$root/home/.claude.json" <<EOF
 }
 EOF
 
-# The demo only runs local commands. The unreachable base URL makes sure no API call
-# is ever made, and keeps the remote-settings 401 warning out of the header.
+# The demo makes no API call: the base URL is demo/mock-api.py, on 127.0.0.1, which
+# answers the one prompt and stops on its own once the recording is over.
 cat > "$root/env.sh" <<EOF
 for name in \$(compgen -e | grep -E '^(CLAUDECODE|CLAUDE_CODE_)'); do unset "\$name"; done
 export HOME="$root/home"
 export ANTHROPIC_API_KEY=$key
-export ANTHROPIC_BASE_URL=http://127.0.0.1:9
+export ANTHROPIC_BASE_URL=http://127.0.0.1:47830
+( timeout 600 python3 -I "$plugin/demo/mock-api.py" 47830 > /dev/null 2>&1 & )
 export CLAUDE_CODE_PLUGIN_DIRS="$plugin"
 export DISABLE_AUTOUPDATER=1
 export PS1='\$ '
