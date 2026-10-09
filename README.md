@@ -121,9 +121,11 @@ Both levels are settings of the plugin, in `/config`: `contextWarningPercent` (7
 
 ## When it refreshes
 
-At session start, after `/clear`, after a change of working directory, at the end of every main-conversation turn, on `/openspec`, as soon as a workflow names another change, and after every Edit or Write of a `tasks.md` and every Bash command that mentions one, so the count follows `/opsx:apply` as it ticks tasks within a single turn.
+At session start, right after `/clear`, after a change of working directory, at the end of every main-conversation turn, on `/openspec`, as soon as a workflow names another change, and after every Edit or Write of a `tasks.md` and every Bash command that mentions one, so the count follows `/opsx:apply` as it ticks tasks within a single turn.
 
-Health is read at session start, after `/clear`, after a change of working directory and on `/openspec`, but never at the end of a turn.
+Health is read at session start, right after `/clear`, after a change of working directory and on `/openspec`, but never at the end of a turn that stays in the same directory.
+
+When Claude Code does not report a change of working directory, the mod notices it at the end of the turn: it then forgets the workflow's change and reads the health in the new directory.
 
 The context fill comes from Claude Code's own measurement after every main-conversation turn.
 
