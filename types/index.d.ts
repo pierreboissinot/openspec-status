@@ -1,4 +1,4 @@
-export type ContextKind = 'local' | 'store' | 'unknown-store' | 'none'
+export type ContextKind = 'local' | 'store' | 'unknown-store' | 'unusable-store' | 'none'
 
 export type ChangeSummary = {
   name: string
@@ -12,6 +12,9 @@ export type OpenSpecContext = {
   kind: ContextKind
   storeId?: string
   fix?: string
+  /** The CLI's resolution error, in `unusable-store`. */
+  message?: string
+  code?: string
   cwd: string
   changes: ChangeSummary[]
   /** The git branch of `cwd`, absent outside a repository or on a detached HEAD. */

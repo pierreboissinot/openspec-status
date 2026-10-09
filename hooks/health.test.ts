@@ -9,6 +9,7 @@ import { localList } from './fixtures/local'
 import { noRootList } from './fixtures/no-root'
 import { storeList } from './fixtures/store'
 import { unknownStoreList } from './fixtures/unknown-store'
+import { unusableStoreList } from './fixtures/unusable-store'
 import { parseDoctorOutput } from './register'
 import { createWorld, endTurn, pendingDoctor, runCommand, startSession } from './test-world'
 
@@ -172,6 +173,7 @@ describe('health triggers', () => {
   for (const [name, list] of [
     ['no OpenSpec root', noRootList],
     ['an unknown store', unknownStoreList],
+    ['an unusable store', unusableStoreList],
   ] as const) {
     test(`with ${name} doctor never runs and no finding is retained`, async ($, on) => {
       const world = createWorld(on, { list, doctor: doctorStoreBehind })

@@ -3,13 +3,17 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { ChangeSummary, ContextKind, HealthFinding, OpenSpecContext, OpenSpecHealth } from '../types'
 
-export type ParsedList = Pick<OpenSpecContext, 'kind' | 'storeId' | 'fix' | 'changes'>
+export type ParsedList = Pick<OpenSpecContext, 'kind' | 'storeId' | 'fix' | 'message' | 'code' | 'changes'>
 
 type ListJson = {
   changes?: unknown
   root?: { source?: string; store_id?: string } | null
-  status?: { code?: string; message?: string; fix?: string }[]
+  status?: { severity?: string; code?: string; message?: string; fix?: string }[]
 }
+
+const DECLARED_PREFIX = 'Declared in '
+
+const UNREGISTERED_CODES = ['unknown_store', 'no_registered_stores']
 
 const toSummary = (raw: Record<string, unknown>): ChangeSummary => ({
   name: String(raw.name ?? ''),
@@ -40,9 +44,19 @@ export const parseListOutput = (stdout: string): ParsedList | null => {
     return { kind: 'local', changes }
   }
 
-  const unknownStore = json.status?.find(s => s.code === 'unknown_store')
-  if (unknownStore) {
-    return { kind: 'unknown-store', fix: unknownStore.fix ?? unknownStore.message ?? '', changes: [] }
+  const error = json.status?.find(s => s.severity === 'error')
+  const declared = error?.message?.startsWith(DECLARED_PREFIX) === true
+  if (declared && UNREGISTERED_CODES.includes(error?.code ?? '')) {
+    return { kind: 'unknown-store', fix: error?.fix ?? error?.message ?? '', changes: [] }
+  }
+  if (error && (declared || error.code === 'invalid_store_pointer')) {
+    return {
+      kind: 'unusable-store',
+      message: error.message ?? '',
+      ...(error.code === undefined ? {} : { code: error.code }),
+      ...(error.fix === undefined ? {} : { fix: error.fix }),
+      changes: [],
+    }
   }
   return { kind: 'none', changes: [] }
 }
@@ -207,6 +221,10 @@ const withCurrent = (context: OpenSpecContext, workflowChange: string | null): O
 }
 
 export const statusText = (context: OpenSpecContext | null, health: OpenSpecHealth | null): string | undefined => {
+  if (context?.kind === 'unknown-store') return 'openspec  store not registered'
+  if (context?.kind === 'unusable-store') {
+    return context.code === 'invalid_store_pointer' ? 'openspec  store: line invalid' : 'openspec  store unusable'
+  }
   if (context === null || !hasRoot(context.kind)) return undefined
   const change = context.changes.find(candidate => candidate.name === context.currentChange)
   const progress = change && (change.totalTasks === 0 ? 'no tasks' : `${change.completedTasks}/${change.totalTasks} tasks`)
@@ -321,6 +339,7 @@ const knownNames = (context: OpenSpecContext | null): string[] =>
 const summaryLine = (context: OpenSpecContext): string => {
   if (context.kind === 'none') return `openspec: no OpenSpec root resolved from ${context.cwd}`
   if (context.kind === 'unknown-store') return `openspec: unknown store, ${context.fix ?? ''}`
+  if (context.kind === 'unusable-store') return 'openspec: unusable store'
   const source = context.kind === 'store' ? (context.storeId ? `store:${context.storeId}` : 'store') : 'local'
   const count = context.changes.length
   return `openspec: ${source}, ${count} active change${count === 1 ? '' : 's'}`
@@ -335,7 +354,8 @@ export const commandAnswer = (
   let summary = summaryLine(context)
   if (refreshError !== null) summary += ` (refresh failed: ${refreshError})`
   if (current?.error !== undefined) summary += ` (doctor failed: ${current.error})`
-  const findings = (current?.findings ?? []).flatMap(finding =>
+  const storeError = context.kind === 'unusable-store' ? [{ message: context.message ?? '', fix: context.fix }] : []
+  const findings = [...storeError, ...(current?.findings ?? [])].flatMap(finding =>
     finding.fix === undefined ? [`- ${finding.message}`] : [`- ${finding.message}`, `  Fix: ${finding.fix}`],
   )
   return [summary, ...findings].join('\n')
