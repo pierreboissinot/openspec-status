@@ -5,6 +5,8 @@
 
 A [Claude Code](https://claude.com/claude-code) mod that keeps the [OpenSpec](https://github.com/Fission-AI/OpenSpec) change you are working on, and how many of its tasks are ticked, in the status line under the prompt. It works with a local `openspec/` root and with a shared store declared by `store:` in `openspec/config.yaml`.
 
+In any project, with OpenSpec or not, it also warns when the context window fills up, before auto-compaction summarizes the conversation for you.
+
 ![Claude Code with the status line on add-dark-mode at 3/7 tasks; after a task is ticked /openspec shows 4/7, and after a switch to the fix-login-redirect branch it shows that change at 4/4](demo/demo.gif)
 
 In the OpenSpec repository, after `/opsx:apply add-global-install-scope`:
@@ -57,7 +59,7 @@ Where no flag can be given (the desktop app, an SDK host), set `CLAUDE_CODE_PLUG
    - in a command Claude runs through the `openspec` CLI, as every `/opsx` workflow does: `--change <name>`, `new change <name>`, or an argument that is the name of a change (`openspec validate <name>`). Launchers such as `npx`, `pnpm` or `env` in front, and a versioned package (`npx @fission-ai/openspec@latest`), are recognized; `openspec` quoted inside another command's argument is not;
    - the first argument of an `/opsx:*` command, when it is the name of a change.
 2. Otherwise, the change named like the current git branch.
-3. Otherwise none, and there is no status line, unless a health finding is retained or the declared store cannot be used (see below).
+3. Otherwise none, and there is no status line, unless a health finding is retained, the declared store cannot be used or the context fills up (see below).
 
 Changing directory or `/clear` forgets the workflow's change. A change created during the turn (`openspec new change`) shows up once it is listed. A Bash call you refuse at the permission prompt names nothing.
 
@@ -89,13 +91,41 @@ When `openspec/config.yaml` declares a store with `store:` and the CLI cannot re
 
 The line goes away once the store resolves again. `doctor` is not run while the store cannot be used.
 
-Only the project's own `store:` declaration counts. A stale global `defaultStore` (`openspec config set defaultStore`) is ignored: outside an OpenSpec project the mod stays silent.
+Only the project's own `store:` declaration counts. A stale global `defaultStore` (`openspec config set defaultStore`) is ignored: outside an OpenSpec project the mod shows nothing but the context warning.
+
+## Context warning
+
+After every main-conversation turn, Claude Code reports how full the context is, in percent of the model's window. The mod uses the two levels of [abtop](https://github.com/graykode/abtop): a warning from 75%, marked `!`, and a critical level from 90%, marked `⚠`.
+
+Each time the fill reaches a higher level, a toast shows for 10 seconds:
+
+```
+Context 78% full. Write down what matters in an artifact, then start a fresh session or /clear.
+```
+
+With an active change, it names the way back, since `/clear` forgets the workflow's change:
+
+```
+Context 78% full. Capture where you are in add-dark-mode (/opsx:update add-dark-mode), then /clear and resume with /opsx:apply add-dark-mode.
+```
+
+While the fill stays at a level, the status line carries it, after the change and before any finding:
+
+```
+openspec  add-dark-mode  3/7 tasks · context 91%⚠
+```
+
+Outside an OpenSpec project, the line is `context 78%!, write down and /clear`. The segment goes away after `/clear`, or once a compaction brings the fill back below 75%; reaching a level again shows a new toast. The percentage is the model's window, as abtop reads it, so auto-compaction may run before the warning when its own window is smaller.
+
+Both levels are settings of the plugin, in `/config`: `contextWarningPercent` (75) and `contextCriticalPercent` (90). `0` turns a level off. A change applies the next time the plugin is loaded.
 
 ## When it refreshes
 
 At session start, after `/clear`, after a change of working directory, at the end of every main-conversation turn, on `/openspec`, as soon as a workflow names another change, and after every Edit or Write of a `tasks.md` and every Bash command that mentions one, so the count follows `/opsx:apply` as it ticks tasks within a single turn.
 
 Health is read at session start, after `/clear`, after a change of working directory and on `/openspec`, but never at the end of a turn.
+
+The context fill comes from Claude Code's own measurement after every main-conversation turn.
 
 ## `/openspec`
 
@@ -126,8 +156,9 @@ When `openspec doctor --json` fails, the summary ends with `(doctor failed: <rea
 
 ## What it never does
 
-- In a project without OpenSpec, or without the `openspec` CLI, it shows nothing at all: no status line, no command. A stale global `defaultStore` does not change that.
-- It never writes to disk and never repairs anything. It runs only `openspec list --json`, `openspec doctor --json` and `git branch --show-current`, in the session's working directory.
+- In a project without OpenSpec, or without the `openspec` CLI, it shows nothing but the context warning: no OpenSpec line, no command. A stale global `defaultStore` does not change that.
+- It never compacts, clears or ends the session: it only advises.
+- It never writes to disk and never repairs anything. It runs only `openspec list --json`, `openspec doctor --json` and `git branch --show-current`, in the session's working directory. The context warning runs no command and makes no API call.
 - It never calls the model.
 
 ## Development
