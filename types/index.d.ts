@@ -40,6 +40,12 @@ export type OpenSpecHealth = {
   error?: string
 }
 
+export type ContextFill = {
+  /** Percent of the model's window, as `session.measure` reports it. */
+  percent: number
+  level: 'warning' | 'critical'
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'openspec-status': {
@@ -52,6 +58,8 @@ declare module 'claude-code' {
       health: OpenSpecHealth | null
       /** Counts the health reads started; a read that ends after a newer one started is dropped. */
       healthRead: number
+      /** The main session's context fill once it reaches a level; `null` below every level. */
+      contextFill: ContextFill | null
     }
   }
 }

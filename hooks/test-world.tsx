@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import type { OpenSpecContext, OpenSpecHealth } from '../types'
+import type { ContextFill, OpenSpecContext, OpenSpecHealth } from '../types'
 import { doctorHealthy } from './fixtures/doctor-healthy'
 
 /** A printed JSON value, raw text when a string, or `'reject'` when the CLI cannot start. */
@@ -32,6 +32,7 @@ export type World = {
   registeredCommands: string[]
   logs: { text: string; to: string | undefined }[]
   statusAndToasts: string[]
+  toasts: { text: string; timeoutMs: number | undefined }[]
   /** Every `$.ui.status` the mod made, in order; `undefined` for a removal. */
   statusLines: (string | undefined)[]
   /** The mod's `$.state` as last written, by key. */
@@ -40,6 +41,7 @@ export type World = {
     workflowChange?: string | null
     lastError?: string | null
     health?: OpenSpecHealth | null
+    contextFill?: ContextFill | null
   }
   /** Lets the work the mod started without awaiting it run to its end. */
   settle: () => Promise<void>
@@ -59,6 +61,7 @@ export const createWorld = (on: On, given: Pick<World, 'list'> & Partial<Pick<Wo
     registeredCommands: [],
     logs: [],
     statusAndToasts: [],
+    toasts: [],
     statusLines: [],
     state: {},
     settle: clock.settle,
@@ -104,8 +107,11 @@ export const createWorld = (on: On, given: Pick<World, 'list'> & Partial<Pick<Wo
   })
   on('ui.toast', (_$, e) => {
     world.statusAndToasts.push(`toast: ${String(e.text)}`)
+    world.toasts.push({ text: e.text, timeoutMs: e.timeoutMs })
     return { value: undefined }
   })
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
   on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: '', stderr: '', interrupted: false } }))
   on('tool.call', { tool: 'Edit' }, (_$, e) => ({
     result: {
@@ -142,6 +148,20 @@ export const endTurn = ($: Engine, agentId?: string) =>
     turnId: 'turn',
     reason: 'answer',
     ...(agentId === undefined ? {} : { agentId }),
+  })
+
+/** `/clear` as the engine runs it: the session ends with reason `clear`, then the classic SessionStart hook. */
+export const clear = async ($: Engine) => {
+  await $.session.end({ reason: 'clear', sessionId: 'session', resume: { id: 'session' } })
+  await $.classic.SessionStart({ source: 'clear' })
+}
+
+/** A measurement of the main session's context; `percent` left out before the first response. */
+export const measure = ($: Engine, percent?: number, window = 200_000) =>
+  $.session.measure({
+    context: percent === undefined ? { window } : { window, percent, tokens: Math.round((window * percent) / 100) },
+    rateLimits: [],
+    changed: ['context'],
   })
 
 export const runBash = ($: Engine, command: string) => $.tool.call({ tool: 'Bash', command })

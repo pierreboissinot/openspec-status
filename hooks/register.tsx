@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ChangeSummary, ContextKind, HealthFinding, OpenSpecContext, OpenSpecHealth } from '../types'
+import type { ChangeSummary, ContextFill, ContextKind, HealthFinding, OpenSpecContext, OpenSpecHealth } from '../types'
 
 export type ParsedList = Pick<OpenSpecContext, 'kind' | 'storeId' | 'fix' | 'message' | 'code' | 'changes'>
 
@@ -209,6 +209,27 @@ export const workflowChangeAtom = atom({ plugin: 'openspec-status', key: 'workfl
 export const lastErrorAtom = atom({ plugin: 'openspec-status', key: 'lastError' } as const, null)
 export const healthAtom = atom({ plugin: 'openspec-status', key: 'health' } as const, null)
 export const healthReadAtom = atom({ plugin: 'openspec-status', key: 'healthRead' } as const, 0)
+export const contextFillAtom = atom({ plugin: 'openspec-status', key: 'contextFill' } as const, null)
+
+export type ContextThresholds = { warning: number; critical: number }
+
+export const levelOf = (percent: number | undefined, thresholds: ContextThresholds): ContextFill | null => {
+  if (percent === undefined) return null
+  if (thresholds.critical > 0 && percent >= thresholds.critical) return { percent, level: 'critical' }
+  if (thresholds.warning > 0 && percent >= thresholds.warning) return { percent, level: 'warning' }
+  return null
+}
+
+const rank = (fill: ContextFill | null): number => (fill === null ? 0 : fill.level === 'warning' ? 1 : 2)
+
+export const contextToast = (context: OpenSpecContext | null, percent: number): string => {
+  const change = context !== null && hasRoot(context.kind) ? context.currentChange : undefined
+  const advice =
+    change === undefined
+      ? 'Write down what matters in an artifact, then start a fresh session or /clear.'
+      : `Capture where you are in ${change} (/opsx:update ${change}), then /clear and resume with /opsx:apply ${change}.`
+  return `Context ${percent}% full. ${advice}`
+}
 
 const hasRoot = (kind: ContextKind): boolean => kind === 'local' || kind === 'store'
 
@@ -220,19 +241,30 @@ const withCurrent = (context: OpenSpecContext, workflowChange: string | null): O
   return current === undefined ? rest : { ...rest, currentChange: current }
 }
 
-export const statusText = (context: OpenSpecContext | null, health: OpenSpecHealth | null): string | undefined => {
-  if (context?.kind === 'unknown-store') return 'openspec  store not registered'
-  if (context?.kind === 'unusable-store') {
-    return context.code === 'invalid_store_pointer' ? 'openspec  store: line invalid' : 'openspec  store unusable'
+export const statusText = (
+  context: OpenSpecContext | null,
+  health: OpenSpecHealth | null,
+  fill: ContextFill | null,
+): string | undefined => {
+  const fillSegment = fill === null ? undefined : `context ${fill.percent}%${fill.level === 'critical' ? '⚠' : '!'}`
+  if (context === null || context.kind === 'none') {
+    return fillSegment && `${fillSegment}, write down and /clear`
   }
-  if (context === null || !hasRoot(context.kind)) return undefined
   const change = context.changes.find(candidate => candidate.name === context.currentChange)
   const progress = change && (change.totalTasks === 0 ? 'no tasks' : `${change.completedTasks}/${change.totalTasks} tasks`)
-  const head = change && `openspec  ${change.name}  ${progress}`
-  const [first, ...others] = health?.cwd === context.cwd ? health.findings : []
-  const tail = first && `${first.summary}${others.length > 0 ? ` +${others.length}` : ''}`
-  if (head && tail) return `${head} · ${tail}`
-  return head ?? (tail ? `openspec  ${tail}` : undefined)
+  const head = change && `${change.name}  ${progress}`
+  const [first, ...others] = hasRoot(context.kind) && health?.cwd === context.cwd ? health.findings : []
+  const finding = first && `${first.summary}${others.length > 0 ? ` +${others.length}` : ''}`
+  const tail =
+    context.kind === 'unknown-store'
+      ? 'store not registered'
+      : context.kind === 'unusable-store'
+        ? context.code === 'invalid_store_pointer'
+          ? 'store: line invalid'
+          : 'store unusable'
+        : finding
+  const segments = [head, fillSegment, tail].filter(segment => segment !== undefined)
+  return segments.length === 0 ? undefined : `openspec  ${segments.join(' · ')}`
 }
 
 const writeLine = ($: EngineInterface, before: string | undefined, after: string | undefined): void => {
@@ -243,16 +275,26 @@ const writeLine = ($: EngineInterface, before: string | undefined, after: string
   }
 }
 
+const currentLine = async ($: EngineInterface): Promise<string | undefined> =>
+  statusText(await read($, contextAtom), await read($, healthAtom), await read($, contextFillAtom))
+
 const writeContext = async ($: EngineInterface, context: OpenSpecContext): Promise<void> => {
-  const before = statusText(await read($, contextAtom), await read($, healthAtom))
+  const before = await currentLine($)
   await update($, contextAtom, () => context)
-  writeLine($, before, statusText(context, await read($, healthAtom)))
+  writeLine($, before, await currentLine($))
 }
 
 const writeHealth = async ($: EngineInterface, health: OpenSpecHealth | null): Promise<void> => {
-  const before = statusText(await read($, contextAtom), await read($, healthAtom))
+  const before = await currentLine($)
   await update($, healthAtom, () => health)
-  const after = statusText(await read($, contextAtom), health)
+  const after = await currentLine($)
+  if (after !== before) writeLine($, before, after)
+}
+
+const writeFill = async ($: EngineInterface, fill: ContextFill | null): Promise<void> => {
+  const before = await currentLine($)
+  await update($, contextFillAtom, () => fill)
+  const after = await currentLine($)
   if (after !== before) writeLine($, before, after)
 }
 
@@ -361,7 +403,33 @@ export const commandAnswer = (
   return [summary, ...findings].join('\n')
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  const thresholds: ContextThresholds = {
+    warning: Number(options.contextWarningPercent),
+    critical: Number(options.contextCriticalPercent),
+  }
+
+  on('session.measure', async ($, e, next) => {
+    const fill = levelOf(e.context.percent, thresholds)
+    const previous = await read($, contextFillAtom)
+    if (fill !== null && rank(fill) > rank(previous)) {
+      $.ui.toast(contextToast(await read($, contextAtom), fill.percent), { timeoutMs: 10_000 })
+    }
+    if (fill?.percent !== previous?.percent || fill?.level !== previous?.level) {
+      await writeFill($, fill)
+    }
+    return next(e)
+  })
+
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear') {
+      await update($, contextFillAtom, () => null)
+      const context = await read($, contextAtom)
+      $.ui.status(statusText(context && withCurrent(context, null), await read($, healthAtom), null))
+    }
+    return next(e)
+  })
+
   on('command.run', { command: 'openspec' }, async $ => {
     const context = await refresh($, await $.session.cwd())
     await readHealth($, context)

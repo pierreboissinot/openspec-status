@@ -1,9 +1,27 @@
 {
   "name": "openspec-status",
   "version": "0.2.1",
-  "description": "Shows the OpenSpec changes of the open project under the prompt, for local roots and stores.",
+  "description": "Shows the OpenSpec changes of the open project under the prompt, for local roots and stores, and warns in any project when the context fills up.",
   "types": "./types/index.d.ts",
   "author": {
     "name": "Pierre Boissinot"
+  },
+  "userConfig": {
+    "contextWarningPercent": {
+      "type": "number",
+      "title": "Context warning (%)",
+      "description": "Context fill, in percent of the model's window, that shows the first warning. 0 turns it off. Applies when the plugin is next loaded.",
+      "default": 75,
+      "min": 0,
+      "max": 100
+    },
+    "contextCriticalPercent": {
+      "type": "number",
+      "title": "Context critical (%)",
+      "description": "Context fill, in percent of the model's window, that shows the second warning. 0 turns it off. Applies when the plugin is next loaded.",
+      "default": 90,
+      "min": 0,
+      "max": 100
+    }
   }
 }
