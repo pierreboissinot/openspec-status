@@ -11,6 +11,7 @@ import { noRootList } from './fixtures/no-root'
 import { statusProposalOnly } from './fixtures/status-proposal-only'
 import { storeList } from './fixtures/store'
 import { unknownStoreList } from './fixtures/unknown-store'
+import { unusableStoreList } from './fixtures/unusable-store'
 import { clear, createWorld, endTurn, mountPane, paneLines, pendingOutput, runBash, runCommand, startSession } from './test-world'
 
 /** The engine's `$` in a test has no `ui.close`, so a plugin raises it as the close mark would. */
@@ -447,6 +448,17 @@ describe('pane without a usable root', () => {
     const pane = await mountPane($)
 
     expect(await paneLines(pane)).toContain(`Fix: ${unknownStoreList.status[0]?.fix}`)
+    expect(await pane.findAll({ type: 'Button' })).toEqual([])
+  })
+
+  test('a declared store that cannot be used shows the CLI message, then its fix, and no tab', async ($, on) => {
+    const world = createWorld(on, { list: unusableStoreList })
+    await startSession($, world)
+    await runCommand($, 'openspec', 'view')
+    const pane = await mountPane($)
+    const [status] = unusableStoreList.status
+
+    expect(await paneLines(pane)).toEqual(['store unusable', status?.message, `Fix: ${status?.fix}`])
     expect(await pane.findAll({ type: 'Button' })).toEqual([])
   })
 

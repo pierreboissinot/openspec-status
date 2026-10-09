@@ -702,6 +702,13 @@ export const paneTree = (el: PaneElements, input: PaneInput): RenderElement => {
       Text({ wrap: 'wrap', children: [`Fix: ${context.fix ?? ''}`] }),
     ])
   }
+  if (context.kind === 'unusable-store') {
+    return column([
+      Text({ bold: true, children: ['store unusable'] }),
+      Text({ wrap: 'wrap', children: [context.message ?? ''] }),
+      ...(context.fix === undefined ? [] : [Text({ wrap: 'wrap', children: [`Fix: ${context.fix}`] })]),
+    ])
+  }
   const tab = (name: PaneTab, label: string, hotkey: string) =>
     Button({
       key: `tab-${name}`,
