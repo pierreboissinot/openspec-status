@@ -5,6 +5,7 @@ Output demo/demo.mp4
 Require claude
 Require openspec
 Require git
+Require python3
 
 Set Shell "bash"
 Set FontSize 18
@@ -55,3 +56,14 @@ Type "1"
 Sleep 2s
 Escape
 Sleep 2s
+
+# demo/mock-api.py answers over a context 78% full: the warning shows in a toast and in the status line.
+Type "Where are we on add-dark-mode?"
+Sleep 600ms
+Enter
+Sleep 7s
+
+Type "/clear"
+Sleep 600ms
+Enter
+Sleep 3s
