@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'claude-code/testing'
 
+import { doctorStoreBehind } from './fixtures/doctor-store-behind'
 import { noRootList } from './fixtures/no-root'
 import { storeList } from './fixtures/store'
-import { createWorld, endTurn, runBash, runEdit, runWrite, startSession } from './test-world'
+import { clear, createWorld, endTurn, runBash, runCommand, runEdit, runWrite, startSession } from './test-world'
 
 describe('refresh', () => {
   test('marks the change named like the current branch', async ($, on) => {
@@ -58,7 +59,7 @@ describe('refresh', () => {
     expect(world.state.context?.currentChange).toBe('add-global-install-scope')
 
     world.list = 'reject'
-    await $.classic.SessionStart({ source: 'clear' })
+    await clear($)
 
     expect(world.state.context?.currentChange).toBe(undefined)
   })
@@ -79,7 +80,7 @@ describe('triggers', () => {
     await world.settle()
     world.openspecRuns.length = 0
 
-    await $.classic.SessionStart({ source: 'clear' })
+    await clear($)
     await world.settle()
 
     expect(world.openspecRuns).toEqual(['list /home/dev/OpenSpec', 'doctor /home/dev/OpenSpec'])
@@ -173,5 +174,92 @@ describe('triggers', () => {
     await endTurn($, 'subagent-1')
 
     expect(world.openspecRuns).toHaveLength(0)
+  })
+})
+
+describe('/clear', () => {
+  test('shows the change named like the branch at once, the workflow one forgotten', async ($, on) => {
+    const world = createWorld(on, { list: storeList, branch: 'add-global-install-scope' })
+    await startSession($, world)
+    await world.settle()
+    await runCommand($, 'opsx:apply', 'fix-schemas-root-selection')
+    expect(world.statusLines.at(-1)).toBe('openspec  fix-schemas-root-selection  13/14 tasks')
+
+    await clear($)
+
+    expect(world.statusLines.at(-1)).toBe('openspec  add-global-install-scope  0/38 tasks')
+    expect(world.state.workflowChange).toBe(null)
+  })
+
+  test('reads the health again and shows the finding once more', async ($, on) => {
+    const world = createWorld(on, { list: storeList, branch: 'main', doctor: doctorStoreBehind })
+    await startSession($, world)
+    await world.settle()
+    world.openspecRuns.length = 0
+
+    await clear($)
+
+    expect(world.openspecRuns).toEqual(['list /home/dev/OpenSpec', 'doctor /home/dev/OpenSpec'])
+    expect(world.state.health?.findings.map(finding => finding.summary)).toEqual(['store 3 commits behind'])
+    expect(world.statusLines.at(-1)).toBe('openspec  store 3 commits behind')
+  })
+
+  test('outside OpenSpec, runs no doctor and shows no line', async ($, on) => {
+    const world = createWorld(on, { list: noRootList, doctor: doctorStoreBehind })
+    await startSession($, world)
+    await world.settle()
+
+    await clear($)
+
+    expect(world.openspecRuns.filter(run => run.startsWith('doctor'))).toEqual([])
+    expect(world.statusAndToasts).toEqual([])
+  })
+})
+
+describe('change of directory at turn end', () => {
+  test('a new directory forgets the workflow change and reads the health there once', async ($, on) => {
+    const world = createWorld(on, { list: storeList, branch: 'main' })
+    await startSession($, world)
+    await world.settle()
+    await runCommand($, 'opsx:apply', 'add-global-install-scope')
+    expect(world.statusLines.at(-1)).toBe('openspec  add-global-install-scope  0/38 tasks')
+    world.openspecRuns.length = 0
+
+    world.cwd = '/home/dev/other'
+    world.doctor = doctorStoreBehind
+    await endTurn($)
+    await world.settle()
+
+    expect(world.openspecRuns).toEqual(['list /home/dev/other', 'doctor /home/dev/other'])
+    expect(world.state.workflowChange).toBe(null)
+    expect(world.statusLines.at(-1)).toBe('openspec  store 3 commits behind')
+  })
+
+  test('the same directory runs no doctor', async ($, on) => {
+    const world = createWorld(on, { list: storeList, doctor: doctorStoreBehind })
+    await startSession($, world)
+    await world.settle()
+    world.openspecRuns.length = 0
+
+    await endTurn($)
+    await world.settle()
+
+    expect(world.openspecRuns).toEqual(['list /home/dev/OpenSpec'])
+  })
+
+  test('after CwdChanged, the turn end runs no second doctor', async ($, on) => {
+    const world = createWorld(on, { list: noRootList, cwd: '/home/dev/elsewhere', doctor: doctorStoreBehind })
+    await startSession($, world)
+    await world.settle()
+
+    world.cwd = '/home/dev/OpenSpec'
+    world.list = storeList
+    await $.classic.CwdChanged({ old_cwd: '/home/dev/elsewhere', new_cwd: '/home/dev/OpenSpec' })
+    await world.settle()
+    world.openspecRuns.length = 0
+    await endTurn($)
+    await world.settle()
+
+    expect(world.openspecRuns).toEqual(['list /home/dev/OpenSpec'])
   })
 })

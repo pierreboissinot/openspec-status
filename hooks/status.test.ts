@@ -10,7 +10,7 @@ import { openspecRepoList } from './fixtures/openspec-repo'
 import { storeList } from './fixtures/store'
 import { unknownStoreList } from './fixtures/unknown-store'
 import { unusableStoreList } from './fixtures/unusable-store'
-import { createWorld, endTurn, pendingDoctor, runBash, runCommand, startSession } from './test-world'
+import { clear, createWorld, endTurn, pendingDoctor, runBash, runCommand, startSession } from './test-world'
 import { changeFromOpenspecCommand } from './register'
 
 const KNOWN = openspecRepoList.changes.map(change => change.name)
@@ -184,7 +184,7 @@ describe('active change', () => {
     await startSession($, world)
     await runBash($, 'openspec status --change fix-schemas-root-selection --json')
 
-    await $.classic.SessionStart({ source: 'clear' })
+    await clear($)
 
     expect(world.state.context?.currentChange).toBe(undefined)
   })
@@ -299,7 +299,7 @@ describe('status line health', () => {
   test('is never set without an OpenSpec root', async ($, on) => {
     const world = createWorld(on, { list: noRootList, doctor: doctorStoreBehind })
     await startSession($, world)
-    await $.classic.SessionStart({ source: 'clear' })
+    await clear($)
     await world.settle()
 
     expect(world.statusLines).toEqual([])

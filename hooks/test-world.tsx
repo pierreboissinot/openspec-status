@@ -128,6 +128,11 @@ export const createWorld = (on: On, given: Pick<World, 'list'> & Partial<Pick<Wo
     result: { type: 'update', filePath: e.file_path, content: e.content, structuredPatch: [], originalFile: null },
   }))
   on('command.run', { command: /^opsx:/ }, () => ({ text: '' }))
+  on('command.run', { command: 'clear' }, async () => {
+    await clearing?.session.end({ reason: 'clear', sessionId: 'session', resume: { id: 'session' } })
+    await clearing?.classic.SessionStart({ source: 'clear' })
+    return { text: '' }
+  })
   on('session.cwd', () => ({ value: world.cwd }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
@@ -150,10 +155,17 @@ export const endTurn = ($: Engine, agentId?: string) =>
     ...(agentId === undefined ? {} : { agentId }),
   })
 
-/** `/clear` as the engine runs it: the session ends with reason `clear`, then the classic SessionStart hook. */
+/** The engine of the `/clear` in flight, which the hooks' `$` cannot drive. */
+let clearing: Engine | undefined
+
+/** `/clear` as the engine runs it: the `clear` command, whose run ends the session then starts the classic SessionStart hook. */
 export const clear = async ($: Engine) => {
-  await $.session.end({ reason: 'clear', sessionId: 'session', resume: { id: 'session' } })
-  await $.classic.SessionStart({ source: 'clear' })
+  clearing = $
+  try {
+    return await runCommand($, 'clear')
+  } finally {
+    clearing = undefined
+  }
 }
 
 /** A measurement of the main session's context; `percent` left out before the first response. */

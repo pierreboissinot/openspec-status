@@ -340,6 +340,40 @@ export const refresh = async ($: EngineInterface, cwd: string): Promise<OpenSpec
   return context
 }
 
+
+/**
+ * Resolves the cleared session after `/clear`'s own run. There, `$.state` still reads as before the clear while
+ * writes land in the cleared session, so every value is passed along rather than read back; the line on screen
+ * is the one `session.end` left, computed from that same pre-clear state.
+ */
+const afterClear = async ($: EngineInterface, cwd: string): Promise<void> => {
+  const previous = await read($, contextAtom)
+  const shown = statusText(previous && withCurrent(previous, null), await read($, healthAtom), null)
+
+  const listed = await listChanges($, cwd)
+  if (typeof listed === 'string') $.ui.log(`openspec-status: ${listed}`, { to: 'debug' })
+  const parsed: ParsedList = typeof listed === 'string' ? { kind: 'none', changes: [] } : listed
+  const branch = hasRoot(parsed.kind) ? await readBranch($, cwd) : undefined
+  const context = withCurrent(branch === undefined ? { ...parsed, cwd } : { ...parsed, cwd, branch }, null)
+
+  await update($, contextAtom, () => context)
+  await update($, workflowChangeAtom, () => null)
+  await update($, healthAtom, () => null)
+  await update($, contextFillAtom, () => null)
+  await update($, lastErrorAtom, () => (typeof listed === 'string' ? listed : null))
+  const line = statusText(context, null, null)
+  if (line !== shown) writeLine($, shown, line)
+  if (context.kind !== 'none') {
+    await $.command.register({ name: 'openspec', description: 'Refresh the active OpenSpec change and summarize the changes' })
+  }
+  if (!hasRoot(context.kind)) return
+
+  const health = await diagnose($, cwd)
+  await update($, healthAtom, () => health)
+  const withHealth = statusText(context, health, null)
+  if (withHealth !== line) writeLine($, line, withHealth)
+}
+
 const diagnose = async ($: EngineInterface, cwd: string): Promise<OpenSpecHealth> => {
   let findings: HealthFinding[] | string
   try {
@@ -423,11 +457,19 @@ export const register: Register = (on, options) => {
 
   on('session.end', async ($, e, next) => {
     if (e.reason === 'clear') {
+      const before = await currentLine($)
       await update($, contextFillAtom, () => null)
       const context = await read($, contextAtom)
-      $.ui.status(statusText(context && withCurrent(context, null), await read($, healthAtom), null))
+      const after = statusText(context && withCurrent(context, null), await read($, healthAtom), null)
+      if (after !== before) writeLine($, before, after)
     }
     return next(e)
+  })
+
+  on('command.run', { command: 'clear' }, async ($, e, next) => {
+    const result = await next(e)
+    await afterClear($, await $.session.cwd())
+    return result
   })
 
   on('command.run', { command: 'openspec' }, async $ => {
@@ -476,14 +518,6 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('classic.SessionStart', async ($, e, next) => {
-    if (e.source === 'clear') {
-      await update($, workflowChangeAtom, () => null)
-      startHealthRead($, await refresh($, await $.session.cwd()))
-    }
-    return next(e)
-  })
-
   on('classic.CwdChanged', async ($, e, next) => {
     await update($, workflowChangeAtom, () => null)
     startHealthRead($, await refresh($, e.new_cwd))
@@ -493,7 +527,12 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     if (e.agentId === undefined) {
-      await refresh($, await $.session.cwd())
+      const cwd = await $.session.cwd()
+      const previous = await read($, contextAtom)
+      const hasMoved = previous !== null && previous.cwd !== cwd
+      if (hasMoved) await update($, workflowChangeAtom, () => null)
+      const context = await refresh($, cwd)
+      if (hasMoved) startHealthRead($, context)
     }
     return result
   })
