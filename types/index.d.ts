@@ -40,6 +40,40 @@ export type OpenSpecHealth = {
   error?: string
 }
 
+/** A read of the CLI that failed, with the reason shown in the pane. */
+export type Failed = { error: string }
+
+export type SpecsSummary = { count: number; requirements: number }
+
+export type ArtifactState = { id: string; status: string }
+
+export type ChangeStatus = { schema: string; artifacts: ArtifactState[] }
+
+export type ChangeTask = { description: string; done: boolean }
+
+export type ShownChange = {
+  name: string
+  status: ChangeStatus | Failed
+  tasks: ChangeTask[] | Failed
+}
+
+export type PaneTab = 'overview' | 'change'
+
+export type PaneView = {
+  tab: PaneTab
+  /** The change picked in Overview, shown instead of the active one while it is listed. */
+  pick: string | null
+}
+
+export type PaneData = {
+  /** The cwd the pane's data was read in. */
+  cwd: string
+  /** `null` outside a local or store root, where nothing is read. */
+  specs: SpecsSummary | Failed | null
+  /** `null` when no change is picked or active. */
+  shown: ShownChange | null
+}
+
 export type ContextFill = {
   /** Percent of the model's window, as `session.measure` reports it. */
   percent: number
@@ -58,6 +92,10 @@ declare module 'claude-code' {
       health: OpenSpecHealth | null
       /** Counts the health reads started; a read that ends after a newer one started is dropped. */
       healthRead: number
+      /** `null` while the pane is closed. */
+      pane: PaneData | null
+      /** What the person chose in the pane; only presses, a close and a cwd change write it. */
+      paneView: PaneView
       /** The main session's context fill once it reaches a level; `null` below every level. */
       contextFill: ContextFill | null
     }

@@ -9,7 +9,7 @@ Require git
 Set Shell "bash"
 Set FontSize 18
 Set Width 1280
-Set Height 560
+Set Height 960
 Set Padding 24
 Set WindowBar Colorful
 Set Theme "Catppuccin Mocha"
@@ -26,7 +26,7 @@ Sleep 8s
 Ctrl+C
 Ctrl+C
 Sleep 2s
-Type "demo_changes 6 6; clear"
+Type "demo_changes 6; clear"
 Enter
 Sleep 500ms
 Show
@@ -40,8 +40,18 @@ Sleep 600ms
 Enter
 Sleep 4s
 
-Sleep 3s
-Type "/openspec"
+Type "/openspec view"
 Sleep 600ms
 Enter
-Sleep 5s
+Sleep 4s
+Ctrl+X
+Tab
+Sleep 1s
+Type "2"
+Sleep 3s
+PageDown
+Sleep 3s
+Type "1"
+Sleep 2s
+Escape
+Sleep 2s

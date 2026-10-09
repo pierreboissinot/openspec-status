@@ -6,6 +6,7 @@ import { globalDefaultUnknownStoreList } from './fixtures/global-default-unknown
 import { invalidStorePointerList } from './fixtures/invalid-store-pointer'
 import { noRootList } from './fixtures/no-root'
 import { storeList } from './fixtures/store'
+import { unknownStoreList } from './fixtures/unknown-store'
 import { unusableStoreList } from './fixtures/unusable-store'
 import { createWorld, runCommand, startSession } from './test-world'
 
@@ -173,5 +174,82 @@ describe('/openspec health findings', () => {
 
     expect(text).toStartWith('openspec: store:demo-plans, 30 active changes (doctor failed: ')
     expect(text).not.toContain('\n')
+  })
+})
+
+describe('/openspec view', () => {
+  test('opens the pane in a store, with nothing in the transcript and the status line updated', async ($, on) => {
+    const world = createWorld(on, { list: storeList, branch: 'add-global-install-scope' })
+    await startSession($, world)
+    world.statusLines.length = 0
+
+    const result = await runCommand($, 'openspec', 'view')
+
+    expect(result).toEqual({})
+    expect(world.panes).toEqual(['openspec'])
+    expect(world.statusLines.at(-1)).toBe('openspec  add-global-install-scope  0/38 tasks')
+  })
+
+  test('reads the context, the health and the pane data before opening', async ($, on) => {
+    const world = createWorld(on, { list: storeList, branch: 'add-global-install-scope' })
+    await startSession($, world)
+    await world.settle()
+    world.openspecRuns.length = 0
+
+    await runCommand($, 'openspec', 'view')
+
+    expect([...world.openspecRuns].sort()).toEqual(
+      [
+        'list /home/dev/OpenSpec',
+        'doctor /home/dev/OpenSpec',
+        'list --specs /home/dev/OpenSpec',
+        'status add-global-install-scope /home/dev/OpenSpec',
+        'instructions add-global-install-scope /home/dev/OpenSpec',
+      ].sort(),
+    )
+    expect(world.state.pane?.shown?.name).toBe('add-global-install-scope')
+  })
+
+  test('answers like /openspec and opens no pane once the context became none', async ($, on) => {
+    const world = createWorld(on, { list: storeList })
+    await startSession($, world)
+
+    world.list = noRootList
+    const { text } = await runCommand($, 'openspec', 'view')
+
+    expect(text).toBe('openspec: no OpenSpec root resolved from /home/dev/OpenSpec')
+    expect(world.panes).toEqual([])
+  })
+
+  test('opens the pane for a declared store that is not registered', async ($, on) => {
+    const world = createWorld(on, { list: unknownStoreList })
+    await startSession($, world)
+
+    await runCommand($, 'openspec', 'view')
+
+    expect(world.panes).toEqual(['openspec'])
+    expect(world.openspecRuns.filter(run => run.startsWith('status') || run.startsWith('list --specs'))).toEqual([])
+  })
+
+  test('another argument answers the summary and opens no pane', async ($, on) => {
+    const world = createWorld(on, { list: storeList })
+    await startSession($, world)
+
+    const { text } = await runCommand($, 'openspec', 'status')
+
+    expect(text).toBe('openspec: store:demo-plans, 30 active changes')
+    expect(world.panes).toEqual([])
+  })
+
+  test('running it again keeps one pane and reads its data again', async ($, on) => {
+    const world = createWorld(on, { list: storeList, branch: 'add-global-install-scope' })
+    await startSession($, world)
+    await runCommand($, 'openspec', 'view')
+    world.openspecRuns.length = 0
+
+    await runCommand($, 'openspec', 'view')
+
+    expect(world.panes).toEqual(['openspec'])
+    expect(world.openspecRuns).toContain('list --specs /home/dev/OpenSpec')
   })
 })
