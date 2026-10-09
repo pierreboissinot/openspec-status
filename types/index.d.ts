@@ -1,4 +1,4 @@
-export type ContextKind = 'local' | 'store' | 'unknown-store' | 'none'
+export type ContextKind = 'local' | 'store' | 'unknown-store' | 'unusable-store' | 'none'
 
 export type ChangeSummary = {
   name: string
@@ -12,6 +12,9 @@ export type OpenSpecContext = {
   kind: ContextKind
   storeId?: string
   fix?: string
+  /** The CLI's resolution error, in `unusable-store`. */
+  message?: string
+  code?: string
   cwd: string
   changes: ChangeSummary[]
   /** The git branch of `cwd`, absent outside a repository or on a detached HEAD. */
@@ -71,6 +74,12 @@ export type PaneData = {
   shown: ShownChange | null
 }
 
+export type ContextFill = {
+  /** Percent of the model's window, as `session.measure` reports it. */
+  percent: number
+  level: 'warning' | 'critical'
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'openspec-status': {
@@ -87,6 +96,8 @@ declare module 'claude-code' {
       pane: PaneData | null
       /** What the person chose in the pane; only presses, a close and a cwd change write it. */
       paneView: PaneView
+      /** The main session's context fill once it reaches a level; `null` below every level. */
+      contextFill: ContextFill | null
     }
   }
 }

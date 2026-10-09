@@ -3,9 +3,14 @@ import { describe, expect, test } from 'claude-code/testing'
 import { doctorHealthy } from './fixtures/doctor-healthy'
 import { doctorReferenceUnresolved } from './fixtures/doctor-reference-unresolved'
 import { doctorStoreBehind } from './fixtures/doctor-store-behind'
+import { globalDefaultUnknownStoreList } from './fixtures/global-default-unknown-store'
+import { invalidStorePointerList } from './fixtures/invalid-store-pointer'
 import { noRootList } from './fixtures/no-root'
 import { openspecRepoList } from './fixtures/openspec-repo'
-import { createWorld, endTurn, pendingDoctor, runBash, runCommand, startSession } from './test-world'
+import { storeList } from './fixtures/store'
+import { unknownStoreList } from './fixtures/unknown-store'
+import { unusableStoreList } from './fixtures/unusable-store'
+import { clear, createWorld, endTurn, pendingDoctor, runBash, runCommand, startSession } from './test-world'
 import { changeFromOpenspecCommand } from './register'
 
 const KNOWN = openspecRepoList.changes.map(change => change.name)
@@ -179,7 +184,7 @@ describe('active change', () => {
     await startSession($, world)
     await runBash($, 'openspec status --change fix-schemas-root-selection --json')
 
-    await $.classic.SessionStart({ source: 'clear' })
+    await clear($)
 
     expect(world.state.context?.currentChange).toBe(undefined)
   })
@@ -294,7 +299,7 @@ describe('status line health', () => {
   test('is never set without an OpenSpec root', async ($, on) => {
     const world = createWorld(on, { list: noRootList, doctor: doctorStoreBehind })
     await startSession($, world)
-    await $.classic.SessionStart({ source: 'clear' })
+    await clear($)
     await world.settle()
 
     expect(world.statusLines).toEqual([])
@@ -328,6 +333,48 @@ describe('status line health', () => {
     await $.classic.CwdChanged({ old_cwd: '/home/dev/OpenSpec', new_cwd: '/home/dev/notes' })
 
     expect(world.statusLines.at(-1)).toBe('openspec  add-search  1/4 tasks')
+  })
+})
+
+describe('status line unresolvable store', () => {
+  test('says the declared store is not registered', async ($, on) => {
+    const world = createWorld(on, { list: unknownStoreList })
+    await startSession($, world)
+
+    expect(world.statusLines).toEqual(['openspec  store not registered'])
+  })
+
+  test('says the declared store is unusable', async ($, on) => {
+    const world = createWorld(on, { list: unusableStoreList })
+    await startSession($, world)
+
+    expect(world.statusLines).toEqual(['openspec  store unusable'])
+  })
+
+  test('says the store: line is invalid', async ($, on) => {
+    const world = createWorld(on, { list: invalidStorePointerList })
+    await startSession($, world)
+
+    expect(world.statusLines).toEqual(['openspec  store: line invalid'])
+  })
+
+  test('is removed once /openspec resolves the repaired store', async ($, on) => {
+    const world = createWorld(on, { list: unusableStoreList })
+    await startSession($, world)
+
+    world.list = storeList
+    await runCommand($, 'openspec')
+    await world.settle()
+
+    expect(world.statusLines).toEqual(['openspec  store unusable', undefined])
+  })
+
+  test('is not set for a stale global defaultStore', async ($, on) => {
+    const world = createWorld(on, { list: globalDefaultUnknownStoreList })
+    await startSession($, world)
+    await world.settle()
+
+    expect(world.statusLines).toEqual([])
   })
 })
 

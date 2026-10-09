@@ -2,7 +2,7 @@ import type { On, PaneOpenArgs } from 'claude-code'
 import { mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import type { OpenSpecContext, OpenSpecHealth, PaneData } from '../types'
+import type { ContextFill, OpenSpecContext, OpenSpecHealth, PaneData } from '../types'
 import { applyTasks } from './fixtures/apply-tasks'
 import { doctorHealthy } from './fixtures/doctor-healthy'
 import { specsList } from './fixtures/specs'
@@ -59,6 +59,7 @@ export type World = {
   registeredCommands: string[]
   logs: { text: string; to: string | undefined }[]
   statusAndToasts: string[]
+  toasts: { text: string; timeoutMs: number | undefined }[]
   /** Every `$.ui.status` the mod made, in order; `undefined` for a removal. */
   statusLines: (string | undefined)[]
   /** The mod's `$.state` as last written, by key. */
@@ -68,6 +69,7 @@ export type World = {
     lastError?: string | null
     health?: OpenSpecHealth | null
     pane?: PaneData | null
+    contextFill?: ContextFill | null
   }
   /** Lets the work the mod started without awaiting it run to its end. */
   settle: () => Promise<void>
@@ -95,6 +97,7 @@ export const createWorld = (
     registeredCommands: [],
     logs: [],
     statusAndToasts: [],
+    toasts: [],
     statusLines: [],
     state: {},
     settle: clock.settle,
@@ -166,10 +169,32 @@ export const createWorld = (
   }))
   on('ui.toast', (_$, e) => {
     world.statusAndToasts.push(`toast: ${String(e.text)}`)
+    world.toasts.push({ text: e.text, timeoutMs: e.timeoutMs })
     return { value: undefined }
   })
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
   on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: '', stderr: '', interrupted: false } }))
+  on('tool.call', { tool: 'Edit' }, (_$, e) => ({
+    result: {
+      filePath: e.file_path,
+      oldString: e.old_string,
+      newString: e.new_string,
+      originalFile: null,
+      structuredPatch: [],
+      userModified: false,
+      replaceAll: false,
+    },
+  }))
+  on('tool.call', { tool: 'Write' }, (_$, e) => ({
+    result: { type: 'update', filePath: e.file_path, content: e.content, structuredPatch: [], originalFile: null },
+  }))
   on('command.run', { command: /^opsx:/ }, () => ({ text: '' }))
+  on('command.run', { command: 'clear' }, async () => {
+    await clearing?.session.end({ reason: 'clear', sessionId: 'session', resume: { id: 'session' } })
+    await clearing?.classic.SessionStart({ source: 'clear' })
+    return { text: '' }
+  })
   on('session.cwd', () => ({ value: world.cwd }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
@@ -192,6 +217,27 @@ export const endTurn = ($: Engine, agentId?: string) =>
     ...(agentId === undefined ? {} : { agentId }),
   })
 
+/** The engine of the `/clear` in flight, which the hooks' `$` cannot drive. */
+let clearing: Engine | undefined
+
+/** `/clear` as the engine runs it: the `clear` command, whose run ends the session then starts the classic SessionStart hook. */
+export const clear = async ($: Engine) => {
+  clearing = $
+  try {
+    return await runCommand($, 'clear')
+  } finally {
+    clearing = undefined
+  }
+}
+
+/** A measurement of the main session's context; `percent` left out before the first response. */
+export const measure = ($: Engine, percent?: number, window = 200_000) =>
+  $.session.measure({
+    context: percent === undefined ? { window } : { window, percent, tokens: Math.round((window * percent) / 100) },
+    rateLimits: [],
+    changed: ['context'],
+  })
+
 export const runBash = ($: Engine, command: string) => $.tool.call({ tool: 'Bash', command })
 
 export const mountPane = ($: Engine, bodyColumns = 80) =>
@@ -208,6 +254,11 @@ export type MountedPane = Awaited<ReturnType<typeof mountPane>>
 /** The text of every Text and Button of the pane, in document order. */
 export const paneLines = async (pane: MountedPane): Promise<string[]> =>
   (await pane.findAll({})).filter(element => element.type === 'Text' || element.type === 'Button').map(element => element.text)
+
+export const runEdit = ($: Engine, file_path: string) =>
+  $.tool.call({ tool: 'Edit', file_path, old_string: '- [ ] 1.1', new_string: '- [x] 1.1' })
+
+export const runWrite = ($: Engine, file_path: string) => $.tool.call({ tool: 'Write', file_path, content: '- [x] 1.1\n' })
 
 export const runCommand = ($: Engine, command: string, args = '') =>
   $.command.run({ command, args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })

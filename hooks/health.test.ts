@@ -9,8 +9,9 @@ import { localList } from './fixtures/local'
 import { noRootList } from './fixtures/no-root'
 import { storeList } from './fixtures/store'
 import { unknownStoreList } from './fixtures/unknown-store'
+import { unusableStoreList } from './fixtures/unusable-store'
 import { parseDoctorOutput } from './register'
-import { createWorld, endTurn, pendingDoctor, runCommand, startSession } from './test-world'
+import { clear, createWorld, endTurn, pendingDoctor, runCommand, startSession } from './test-world'
 
 const parse = (json: unknown) => parseDoctorOutput(JSON.stringify(json))
 
@@ -172,11 +173,12 @@ describe('health triggers', () => {
   for (const [name, list] of [
     ['no OpenSpec root', noRootList],
     ['an unknown store', unknownStoreList],
+    ['an unusable store', unusableStoreList],
   ] as const) {
     test(`with ${name} doctor never runs and no finding is retained`, async ($, on) => {
       const world = createWorld(on, { list, doctor: doctorStoreBehind })
       await startSession($, world)
-      await $.classic.SessionStart({ source: 'clear' })
+      await clear($)
       await world.settle()
 
       expect(world.openspecRuns.filter(run => run.startsWith('doctor'))).toEqual([])
@@ -267,7 +269,7 @@ describe('doctor failure', () => {
       expect(world.state.health?.findings).toHaveLength(1)
 
       world.doctor = failing
-      await $.classic.SessionStart({ source: 'clear' })
+      await clear($)
       await world.settle()
 
       expect(world.state.health).toEqual({ cwd: '/home/dev/OpenSpec', findings: [], error: expect.any(String) })

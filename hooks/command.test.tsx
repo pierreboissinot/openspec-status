@@ -2,14 +2,31 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { doctorReferenceUnresolved } from './fixtures/doctor-reference-unresolved'
 import { doctorStoreBehind } from './fixtures/doctor-store-behind'
+import { globalDefaultUnknownStoreList } from './fixtures/global-default-unknown-store'
+import { invalidStorePointerList } from './fixtures/invalid-store-pointer'
 import { noRootList } from './fixtures/no-root'
 import { storeList } from './fixtures/store'
 import { unknownStoreList } from './fixtures/unknown-store'
+import { unusableStoreList } from './fixtures/unusable-store'
 import { createWorld, runCommand, startSession } from './test-world'
 
 describe('/openspec registration', () => {
   test('is not registered without an OpenSpec root', async ($, on) => {
     const world = createWorld(on, { list: noRootList })
+    await startSession($, world)
+
+    expect(world.registeredCommands).toEqual([])
+  })
+
+  test('is registered when the declared store is unusable', async ($, on) => {
+    const world = createWorld(on, { list: unusableStoreList })
+    await startSession($, world)
+
+    expect(world.registeredCommands).toContain('openspec')
+  })
+
+  test('is not registered for a stale global defaultStore', async ($, on) => {
+    const world = createWorld(on, { list: globalDefaultUnknownStoreList })
     await startSession($, world)
 
     expect(world.registeredCommands).toEqual([])
@@ -79,6 +96,34 @@ describe('/openspec run', () => {
     expect(text).toBe('openspec: no OpenSpec root resolved from /home/dev/OpenSpec')
     expect(world.state.context?.kind).toBe('none')
     expect(world.statusLines.at(-1)).toBe(undefined)
+  })
+})
+
+describe('/openspec unusable store', () => {
+  test('explains a declared store without a healthy root, with its fix', async ($, on) => {
+    const world = createWorld(on, { list: unusableStoreList })
+    await startSession($, world)
+
+    const { text } = await runCommand($, 'openspec')
+
+    expect(text?.split('\n')).toEqual([
+      'openspec: unusable store',
+      `- ${unusableStoreList.status[0]?.message}`,
+      '  Fix: Run openspec store doctor team-plans to inspect it.',
+    ])
+  })
+
+  test('explains an invalid store declaration, with its fix', async ($, on) => {
+    const world = createWorld(on, { list: invalidStorePointerList })
+    await startSession($, world)
+
+    const { text } = await runCommand($, 'openspec')
+
+    expect(text?.split('\n')).toEqual([
+      'openspec: unusable store',
+      `- ${invalidStorePointerList.status[0]?.message}`,
+      `  Fix: ${invalidStorePointerList.status[0]?.fix}`,
+    ])
   })
 })
 

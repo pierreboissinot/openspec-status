@@ -13,6 +13,7 @@ import type {
   ChangeStatus,
   ChangeSummary,
   ChangeTask,
+  ContextFill,
   ContextKind,
   Failed,
   HealthFinding,
@@ -25,13 +26,17 @@ import type {
   SpecsSummary,
 } from '../types'
 
-export type ParsedList = Pick<OpenSpecContext, 'kind' | 'storeId' | 'fix' | 'changes'>
+export type ParsedList = Pick<OpenSpecContext, 'kind' | 'storeId' | 'fix' | 'message' | 'code' | 'changes'>
 
 type ListJson = {
   changes?: unknown
   root?: { source?: string; store_id?: string } | null
-  status?: { code?: string; message?: string; fix?: string }[]
+  status?: { severity?: string; code?: string; message?: string; fix?: string }[]
 }
+
+const DECLARED_PREFIX = 'Declared in '
+
+const UNREGISTERED_CODES = ['unknown_store', 'no_registered_stores']
 
 const toSummary = (raw: Record<string, unknown>): ChangeSummary => ({
   name: String(raw.name ?? ''),
@@ -62,9 +67,19 @@ export const parseListOutput = (stdout: string): ParsedList | null => {
     return { kind: 'local', changes }
   }
 
-  const unknownStore = json.status?.find(s => s.code === 'unknown_store')
-  if (unknownStore) {
-    return { kind: 'unknown-store', fix: unknownStore.fix ?? unknownStore.message ?? '', changes: [] }
+  const error = json.status?.find(s => s.severity === 'error')
+  const declared = error?.message?.startsWith(DECLARED_PREFIX) === true
+  if (declared && UNREGISTERED_CODES.includes(error?.code ?? '')) {
+    return { kind: 'unknown-store', fix: error?.fix ?? error?.message ?? '', changes: [] }
+  }
+  if (error && (declared || error.code === 'invalid_store_pointer')) {
+    return {
+      kind: 'unusable-store',
+      message: error.message ?? '',
+      ...(error.code === undefined ? {} : { code: error.code }),
+      ...(error.fix === undefined ? {} : { fix: error.fix }),
+      changes: [],
+    }
   }
   return { kind: 'none', changes: [] }
 }
@@ -261,6 +276,27 @@ const FRESH_VIEW: PaneView = { tab: 'overview', pick: null }
 export const paneViewAtom = atom({ plugin: 'openspec-status', key: 'paneView' } as const, FRESH_VIEW)
 
 export const PANE = 'openspec'
+export const contextFillAtom = atom({ plugin: 'openspec-status', key: 'contextFill' } as const, null)
+
+export type ContextThresholds = { warning: number; critical: number }
+
+export const levelOf = (percent: number | undefined, thresholds: ContextThresholds): ContextFill | null => {
+  if (percent === undefined) return null
+  if (thresholds.critical > 0 && percent >= thresholds.critical) return { percent, level: 'critical' }
+  if (thresholds.warning > 0 && percent >= thresholds.warning) return { percent, level: 'warning' }
+  return null
+}
+
+const rank = (fill: ContextFill | null): number => (fill === null ? 0 : fill.level === 'warning' ? 1 : 2)
+
+export const contextToast = (context: OpenSpecContext | null, percent: number): string => {
+  const change = context !== null && hasRoot(context.kind) ? context.currentChange : undefined
+  const advice =
+    change === undefined
+      ? 'Write down what matters in an artifact, then start a fresh session or /clear.'
+      : `Capture where you are in ${change} (/opsx:update ${change}), then /clear and resume with /opsx:apply ${change}.`
+  return `Context ${percent}% full. ${advice}`
+}
 
 const hasRoot = (kind: ContextKind): boolean => kind === 'local' || kind === 'store'
 
@@ -272,15 +308,30 @@ const withCurrent = (context: OpenSpecContext, workflowChange: string | null): O
   return current === undefined ? rest : { ...rest, currentChange: current }
 }
 
-export const statusText = (context: OpenSpecContext | null, health: OpenSpecHealth | null): string | undefined => {
-  if (context === null || !hasRoot(context.kind)) return undefined
+export const statusText = (
+  context: OpenSpecContext | null,
+  health: OpenSpecHealth | null,
+  fill: ContextFill | null,
+): string | undefined => {
+  const fillSegment = fill === null ? undefined : `context ${fill.percent}%${fill.level === 'critical' ? '⚠' : '!'}`
+  if (context === null || context.kind === 'none') {
+    return fillSegment && `${fillSegment}, write down and /clear`
+  }
   const change = context.changes.find(candidate => candidate.name === context.currentChange)
   const progress = change && (change.totalTasks === 0 ? 'no tasks' : `${change.completedTasks}/${change.totalTasks} tasks`)
-  const head = change && `openspec  ${change.name}  ${progress}`
-  const [first, ...others] = health?.cwd === context.cwd ? health.findings : []
-  const tail = first && `${first.summary}${others.length > 0 ? ` +${others.length}` : ''}`
-  if (head && tail) return `${head} · ${tail}`
-  return head ?? (tail ? `openspec  ${tail}` : undefined)
+  const head = change && `${change.name}  ${progress}`
+  const [first, ...others] = hasRoot(context.kind) && health?.cwd === context.cwd ? health.findings : []
+  const finding = first && `${first.summary}${others.length > 0 ? ` +${others.length}` : ''}`
+  const tail =
+    context.kind === 'unknown-store'
+      ? 'store not registered'
+      : context.kind === 'unusable-store'
+        ? context.code === 'invalid_store_pointer'
+          ? 'store: line invalid'
+          : 'store unusable'
+        : finding
+  const segments = [head, fillSegment, tail].filter(segment => segment !== undefined)
+  return segments.length === 0 ? undefined : `openspec  ${segments.join(' · ')}`
 }
 
 const writeLine = ($: EngineInterface, before: string | undefined, after: string | undefined): void => {
@@ -291,16 +342,26 @@ const writeLine = ($: EngineInterface, before: string | undefined, after: string
   }
 }
 
+const currentLine = async ($: EngineInterface): Promise<string | undefined> =>
+  statusText(await read($, contextAtom), await read($, healthAtom), await read($, contextFillAtom))
+
 const writeContext = async ($: EngineInterface, context: OpenSpecContext): Promise<void> => {
-  const before = statusText(await read($, contextAtom), await read($, healthAtom))
+  const before = await currentLine($)
   await update($, contextAtom, () => context)
-  writeLine($, before, statusText(context, await read($, healthAtom)))
+  writeLine($, before, await currentLine($))
 }
 
 const writeHealth = async ($: EngineInterface, health: OpenSpecHealth | null): Promise<void> => {
-  const before = statusText(await read($, contextAtom), await read($, healthAtom))
+  const before = await currentLine($)
   await update($, healthAtom, () => health)
-  const after = statusText(await read($, contextAtom), health)
+  const after = await currentLine($)
+  if (after !== before) writeLine($, before, after)
+}
+
+const writeFill = async ($: EngineInterface, fill: ContextFill | null): Promise<void> => {
+  const before = await currentLine($)
+  await update($, contextFillAtom, () => fill)
+  const after = await currentLine($)
   if (after !== before) writeLine($, before, after)
 }
 
@@ -347,6 +408,41 @@ export const refresh = async ($: EngineInterface, cwd: string): Promise<OpenSpec
       argumentHint: '[view]',
     })
   }
+  return context
+}
+
+
+/**
+ * Resolves the cleared session after `/clear`'s own run. There, `$.state` still reads as before the clear while
+ * writes land in the cleared session, so every value is passed along rather than read back; the line on screen
+ * is the one `session.end` left, computed from that same pre-clear state.
+ */
+const afterClear = async ($: EngineInterface, cwd: string): Promise<OpenSpecContext> => {
+  const previous = await read($, contextAtom)
+  const shown = statusText(previous && withCurrent(previous, null), await read($, healthAtom), null)
+
+  const listed = await listChanges($, cwd)
+  if (typeof listed === 'string') $.ui.log(`openspec-status: ${listed}`, { to: 'debug' })
+  const parsed: ParsedList = typeof listed === 'string' ? { kind: 'none', changes: [] } : listed
+  const branch = hasRoot(parsed.kind) ? await readBranch($, cwd) : undefined
+  const context = withCurrent(branch === undefined ? { ...parsed, cwd } : { ...parsed, cwd, branch }, null)
+
+  await update($, contextAtom, () => context)
+  await update($, workflowChangeAtom, () => null)
+  await update($, healthAtom, () => null)
+  await update($, contextFillAtom, () => null)
+  await update($, lastErrorAtom, () => (typeof listed === 'string' ? listed : null))
+  const line = statusText(context, null, null)
+  if (line !== shown) writeLine($, shown, line)
+  if (context.kind !== 'none') {
+    await $.command.register({ name: 'openspec', description: 'Refresh the active OpenSpec change and summarize the changes' })
+  }
+  if (!hasRoot(context.kind)) return context
+
+  const health = await diagnose($, cwd)
+  await update($, healthAtom, () => health)
+  const withHealth = statusText(context, health, null)
+  if (withHealth !== line) writeLine($, line, withHealth)
   return context
 }
 
@@ -463,6 +559,7 @@ const sourceOf = (context: OpenSpecContext): string =>
 const summaryLine = (context: OpenSpecContext): string => {
   if (context.kind === 'none') return `openspec: no OpenSpec root resolved from ${context.cwd}`
   if (context.kind === 'unknown-store') return `openspec: unknown store, ${context.fix ?? ''}`
+  if (context.kind === 'unusable-store') return 'openspec: unusable store'
   const source = sourceOf(context)
   const count = context.changes.length
   return `openspec: ${source}, ${count} active change${count === 1 ? '' : 's'}`
@@ -477,7 +574,8 @@ export const commandAnswer = (
   let summary = summaryLine(context)
   if (refreshError !== null) summary += ` (refresh failed: ${refreshError})`
   if (current?.error !== undefined) summary += ` (doctor failed: ${current.error})`
-  const findings = (current?.findings ?? []).flatMap(finding =>
+  const storeError = context.kind === 'unusable-store' ? [{ message: context.message ?? '', fix: context.fix }] : []
+  const findings = [...storeError, ...(current?.findings ?? [])].flatMap(finding =>
     finding.fix === undefined ? [`- ${finding.message}`] : [`- ${finding.message}`, `  Fix: ${finding.fix}`],
   )
   return [summary, ...findings].join('\n')
@@ -620,7 +718,41 @@ export const paneTree = (el: PaneElements, input: PaneInput): RenderElement => {
   ])
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  const thresholds: ContextThresholds = {
+    warning: Number(options.contextWarningPercent),
+    critical: Number(options.contextCriticalPercent),
+  }
+
+  on('session.measure', async ($, e, next) => {
+    const fill = levelOf(e.context.percent, thresholds)
+    const previous = await read($, contextFillAtom)
+    if (fill !== null && rank(fill) > rank(previous)) {
+      $.ui.toast(contextToast(await read($, contextAtom), fill.percent), { timeoutMs: 10_000 })
+    }
+    if (fill?.percent !== previous?.percent || fill?.level !== previous?.level) {
+      await writeFill($, fill)
+    }
+    return next(e)
+  })
+
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear') {
+      const before = await currentLine($)
+      await update($, contextFillAtom, () => null)
+      const context = await read($, contextAtom)
+      const after = statusText(context && withCurrent(context, null), await read($, healthAtom), null)
+      if (after !== before) writeLine($, before, after)
+    }
+    return next(e)
+  })
+
+  on('command.run', { command: 'clear' }, async ($, e, next) => {
+    const result = await next(e)
+    await refreshOpenPane($, await afterClear($, await $.session.cwd()))
+    return result
+  })
+
   on('command.run', { command: 'openspec' }, async ($, e) => {
     const context = await refresh($, await $.session.cwd())
     if (e.args.trim() === 'view' && context.kind !== 'none') {
@@ -651,18 +783,24 @@ export const register: Register = on => {
     return result
   })
 
-  on('session.start', async ($, e, next) => {
-    startHealthRead($, await refresh($, e.cwd))
-    return next(e)
+  on('tool.call', { tool: ['Edit', 'Write'], file_path: /(^|\/)tasks\.md$/ }, async ($, e, next) => {
+    const result = await next(e)
+    if (result.deny === undefined) {
+      await refresh($, await $.session.cwd())
+    }
+    return result
   })
 
-  on('classic.SessionStart', async ($, e, next) => {
-    if (e.source === 'clear') {
-      await update($, workflowChangeAtom, () => null)
-      const context = await refresh($, await $.session.cwd())
-      startHealthRead($, context)
-      await refreshOpenPane($, context)
+  on('tool.call', { tool: 'Bash', command: /\btasks\.md\b/ }, async ($, e, next) => {
+    const result = await next(e)
+    if (result.deny === undefined) {
+      await refresh($, await $.session.cwd())
     }
+    return result
+  })
+
+  on('session.start', async ($, e, next) => {
+    startHealthRead($, await refresh($, e.cwd))
     return next(e)
   })
 
@@ -678,7 +816,16 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     if (e.agentId === undefined) {
-      await refreshOpenPane($, await refresh($, await $.session.cwd()))
+      const cwd = await $.session.cwd()
+      const previous = await read($, contextAtom)
+      const hasMoved = previous !== null && previous.cwd !== cwd
+      if (hasMoved) {
+        await update($, workflowChangeAtom, () => null)
+        await update($, paneViewAtom, view => ({ ...view, pick: null }))
+      }
+      const context = await refresh($, cwd)
+      if (hasMoved) startHealthRead($, context)
+      await refreshOpenPane($, context)
     }
     return result
   })

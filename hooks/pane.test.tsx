@@ -11,7 +11,7 @@ import { noRootList } from './fixtures/no-root'
 import { statusProposalOnly } from './fixtures/status-proposal-only'
 import { storeList } from './fixtures/store'
 import { unknownStoreList } from './fixtures/unknown-store'
-import { createWorld, endTurn, mountPane, paneLines, pendingOutput, runBash, runCommand, startSession } from './test-world'
+import { clear, createWorld, endTurn, mountPane, paneLines, pendingOutput, runBash, runCommand, startSession } from './test-world'
 
 /** The engine's `$` in a test has no `ui.close`, so a plugin raises it as the close mark would. */
 const closer = {
@@ -100,7 +100,7 @@ describe('pane refresh', () => {
     await runCommand($, 'openspec', 'view')
     world.openspecRuns.length = 0
 
-    await $.classic.SessionStart({ source: 'clear' })
+    await clear($)
 
     expect(world.openspecRuns).toContain('list --specs /home/dev/OpenSpec')
   })
